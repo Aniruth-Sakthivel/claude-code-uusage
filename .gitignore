@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Databases / local state
+*.db
+*.db-wal
+*.db-shm
+claudefleet.db
+
+# Node / frontend
+node_modules/
+web/dist/
+*.local
+
+# Env / secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db

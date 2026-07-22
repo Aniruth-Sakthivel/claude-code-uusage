@@ -1,0 +1,230 @@
+"""ClaudeFleet agent CLI (local mode).
+
+    python -m claudefleet scan       # ingest new/changed transcripts
+    python -m claudefleet today      # today's usage by model
+    python -m claudefleet week       # last 7 days
+    python -m claudefleet stats      # all-time statistics
+    python -m claudefleet identity   # show this machine's system_id
+
+Local mode needs no central server. Central-mode commands (register/sync) are
+added in a later phase.
+"""
+
+from __future__ import annotations
+
+import argparse
+from datetime import date
+
+from . import __version__
+from .identity import load_identity, save_identity
+from .pricing import calc_cost, fmt_cost, fmt_tokens
+from .reports import all_time_stats, cost_of, last_n_days, totals_for_day
+from .scanner import scan as run_scan
+from .store import Store, default_db_path
+
+
+def _hr(char="-", width=64):
+    print(char * width)
+
+
+def cmd_scan(args):
+    ident = load_identity(display_name=args.display_name)
+    summary = run_scan(system_id=ident.system_id, db_path=args.db,
+                       verbose=not args.quiet)
+    if args.quiet:
+        print(summary)
+
+
+def cmd_today(args):
+    ident = load_identity()
+    store = Store(args.db or default_db_path())
+    try:
+        today = date.today().isoformat()
+        data = totals_for_day(store, today)
+        print()
+        _hr()
+        print(f"  Today's tracked usage  ({today})   [{ident.display_name}]")
+        _hr()
+        if not data["by_model"]:
+            print("  No usage recorded today.\n")
+            return
+        ti = to = 0
+        tc = 0.0
+        for r in data["by_model"]:
+            c = calc_cost(r["model"], r["inp"] or 0, r["out"] or 0,
+                          r["cr"] or 0, r["cc"] or 0)
+            tc += c
+            ti += r["inp"] or 0
+            to += r["out"] or 0
+            print(f"  {r['model']:<28} events={r['events']:<4} "
+                  f"in={fmt_tokens(r['inp']):<8} out={fmt_tokens(r['out']):<8} "
+                  f"est={fmt_cost(c)}")
+        _hr()
+        print(f"  {'TOTAL':<28} in={fmt_tokens(ti):<8} out={fmt_tokens(to):<8} "
+              f"est={fmt_cost(tc)}")
+        print(f"  Sessions today: {data['sessions']}")
+        _hr()
+        print("  (estimate only - not official Max/Pro quota)\n")
+    finally:
+        store.close()
+
+
+def cmd_week(args):
+    store = Store(args.db or default_db_path())
+    try:
+        rows = last_n_days(store, 7)
+        print()
+        _hr()
+        print("  Last 7 days (tracked tokens)")
+        _hr()
+        if not rows:
+            print("  No usage in the last 7 days.\n")
+            return
+        for r in rows:
+            print(f"  {r['day']}  tokens={fmt_tokens(r['tokens']):<9} "
+                  f"events={r['events']}")
+        _hr()
+        print()
+    finally:
+        store.close()
+
+
+def cmd_stats(args):
+    store = Store(args.db or default_db_path())
+    try:
+        s = all_time_stats(store)
+        t = s["totals"]
+        print()
+        _hr("=")
+        print("  ClaudeFleet - all-time tracked usage")
+        _hr("=")
+        print(f"  Sessions:       {t['sessions'] or 0:,}")
+        print(f"  Events:         {fmt_tokens(t['events'] or 0)}")
+        print(f"  Input tokens:   {fmt_tokens(t['inp'] or 0)}")
+        print(f"  Output tokens:  {fmt_tokens(t['out'] or 0)}")
+        print(f"  Cache read:     {fmt_tokens(t['cr'] or 0)}")
+        print(f"  Cache creation: {fmt_tokens(t['cc'] or 0)}")
+        print(f"  Est. cost:      {fmt_cost(cost_of(s['by_model']))}")
+        _hr()
+        print("  By model:")
+        for r in s["by_model"]:
+            c = calc_cost(r["model"], r["inp"] or 0, r["out"] or 0,
+                          r["cr"] or 0, r["cc"] or 0)
+            print(f"    {r['model']:<28} sessions={r['sessions']:<4} "
+                  f"events={fmt_tokens(r['events']):<7} est={fmt_cost(c)}")
+        _hr()
+        print("  Top projects:")
+        for r in s["top_projects"]:
+            print(f"    {r['project']:<40} sessions={r['sessions']:<3} "
+                  f"tokens={fmt_tokens(r['tokens'])}")
+        _hr("=")
+        print("  (estimate only - not official Max/Pro quota)\n")
+    finally:
+        store.close()
+
+
+def cmd_register(args):
+    from .sync import SyncClient, SyncError
+    ident = load_identity(display_name=args.display_name)
+    ident.server_url = args.server.rstrip("/")
+    ident.api_key = args.api_key
+    if args.display_name:
+        ident.display_name = args.display_name
+    save_identity(ident)
+    try:
+        resp = SyncClient(ident.server_url, ident.api_key).register(
+            ident.display_name, ident.hostname, ident.agent_version)
+        print(f"Registered with central server as '{resp['display_name']}' "
+              f"(server system_id {resp['system_id']}).")
+    except SyncError as e:
+        print(f"Saved config, but registration call failed: {e}")
+
+
+def cmd_heartbeat(args):
+    from .sync import SyncClient, SyncError
+    ident = load_identity()
+    if not ident.server_url or not ident.api_key:
+        print("Central mode not configured. Run: claudefleet register ...")
+        return
+    try:
+        SyncClient(ident.server_url, ident.api_key).heartbeat()
+        print("Heartbeat sent.")
+    except SyncError as e:
+        print(f"Heartbeat failed (offline?): {e}")
+
+
+def cmd_sync(args):
+    from .sync import SyncClient, SyncError, sync_store
+    ident = load_identity()
+    if not ident.server_url or not ident.api_key:
+        print("Central mode not configured. Run: claudefleet register "
+              "--server URL --api-key KEY")
+        return
+    store = Store(args.db or default_db_path())
+    try:
+        client = SyncClient(ident.server_url, ident.api_key)
+        totals = sync_store(store, client, verbose=not args.quiet)
+        print(f"Sync complete: inserted={totals['inserted']} "
+              f"duplicates={totals['duplicates']} (sent={totals['received']}).")
+    except SyncError as e:
+        print(f"Sync failed (offline?) - will retry next run: {e}")
+    finally:
+        store.close()
+
+
+def cmd_identity(args):
+    ident = load_identity(display_name=args.display_name)
+    if args.set_display_name:
+        ident.display_name = args.set_display_name
+        save_identity(ident)
+    print()
+    for k, v in ident.public_dict().items():
+        print(f"  {k:<16} {v}")
+    print()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="claudefleet",
+                                description="ClaudeFleet local usage agent")
+    p.add_argument("--version", action="version", version=__version__)
+    p.add_argument("--db", default=None, help="override local DB path")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    s = sub.add_parser("scan", help="ingest new/changed transcripts")
+    s.add_argument("--display-name", default=None,
+                   help="set machine label on first run (e.g. PC-01)")
+    s.add_argument("--quiet", action="store_true")
+    s.set_defaults(func=cmd_scan)
+
+    sub.add_parser("today", help="today's usage").set_defaults(func=cmd_today)
+    sub.add_parser("week", help="last 7 days").set_defaults(func=cmd_week)
+    sub.add_parser("stats", help="all-time stats").set_defaults(func=cmd_stats)
+
+    # central mode
+    rg = sub.add_parser("register", help="configure + register with a central server")
+    rg.add_argument("--server", required=True, help="central API base URL")
+    rg.add_argument("--api-key", required=True, help="agent API key (from admin)")
+    rg.add_argument("--display-name", default=None)
+    rg.set_defaults(func=cmd_register)
+
+    sub.add_parser("heartbeat", help="send a liveness heartbeat").set_defaults(func=cmd_heartbeat)
+
+    sy = sub.add_parser("sync", help="push unsynced usage to the central server")
+    sy.add_argument("--quiet", action="store_true")
+    sy.set_defaults(func=cmd_sync)
+
+    idp = sub.add_parser("identity", help="show/update this machine's identity")
+    idp.add_argument("--display-name", default=None)
+    idp.add_argument("--set-display-name", default=None)
+    idp.set_defaults(func=cmd_identity)
+    return p
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
