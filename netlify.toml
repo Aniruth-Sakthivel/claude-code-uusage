@@ -1,0 +1,28 @@
+# Netlify configuration — deploys the React dashboard in web/.
+#
+# Netlify hosts the STATIC FRONTEND only. The FastAPI backend (server/) must run
+# on a Python host (Render / Railway / Fly.io / a VM); set its public URL below so
+# Netlify proxies /api/* to it (same-origin, so no CORS needed in the browser).
+
+[build]
+  base = "web"                 # build from the web/ subdirectory
+  command = "npm run build"    # Netlify auto-runs `npm install` in base first
+  publish = "dist"             # relative to base -> web/dist
+
+# --- API proxy -------------------------------------------------------------
+# Forward every /api/* request to your deployed backend. Because the browser
+# only ever talks to the Netlify origin, you don't need to configure CORS.
+# Replace the host with your real backend URL, then redeploy.
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR-BACKEND-HOST/api/:splat"
+  status = 200
+  force = true
+
+# --- SPA fallback ----------------------------------------------------------
+# React Router owns client-side routes (/login, /register, /dashboard, ...).
+# Without this, refreshing those URLs would 404. Must come AFTER the /api rule.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

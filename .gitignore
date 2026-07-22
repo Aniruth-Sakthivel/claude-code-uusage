@@ -14,7 +14,7 @@ claudefleet.db
 
 # Node / frontend
 node_modules/
-web/dist/
+# web/dist/
 *.local
 
 # Env / secrets

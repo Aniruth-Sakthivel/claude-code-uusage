@@ -19,12 +19,58 @@ that metadata to a central API + dashboard.
 ## Repository layout
 
 ```
-agent/     ✅ local agent — scanner, local SQLite store, CLI (this phase)
-server/    ⏳ central API (FastAPI + SQLAlchemy)               [next phases]
-web/       ⏳ central dashboard (React + Vite + TS)            [next phases]
-deploy/    ⏳ Windows install/update scripts + Task Scheduler  [next phases]
-docs/      audit (format spec) + centralization plan
+agent/     local agent — scanner, local SQLite store, sync client, CLI
+server/    central API (FastAPI + SQLAlchemy) — auth, RBAC, sync, dashboard endpoints
+web/       central dashboard (React + Vite + TypeScript + Tailwind)
+docs/      audit (format spec), centralization plan, run guide
 ```
+
+## Run the project
+
+Three parts: the **server** (central API), the **web** dashboard, and the
+**agent** on each PC. For a single machine you only need the agent; for the
+central dashboard, run all three. Prerequisites: **Python 3.10+** and **Node 18+**.
+
+### 1 — Start the central server (run once)
+
+```bash
+cd server
+python -m venv .venv && .venv\Scripts\activate    # Windows (use source .venv/bin/activate on macOS/Linux)
+pip install -e .
+python run.py                                      # serves http://127.0.0.1:8000
+```
+
+First run auto-creates the SQLite database and seeds roles. Set a real secret in
+production: `set CLAUDEFLEET_JWT_SECRET=<random-32+ chars>` (PowerShell:
+`$env:CLAUDEFLEET_JWT_SECRET="..."`). API docs live at `http://127.0.0.1:8000/docs`.
+
+### 2 — Start the web dashboard
+
+```bash
+cd web
+npm install
+npm run dev                                        # opens http://localhost:5173
+```
+
+Open **http://localhost:5173**:
+1. **Create the admin account** on `/register` (available only until the first user exists).
+2. Sign in → name your first machine on the **Set up this machine** panel → copy its **API key** (shown once).
+3. Add more people under **Admin → Users & roles** (role + assigned systems). They sign in at `/login`; RBAC scopes what they see (developers → only their assigned systems).
+
+### 3 — Run the agent on each PC
+
+```bash
+cd agent
+python -m claudefleet register --server http://SERVER:8000 --api-key cfk_... --display-name PC-01
+python -m claudefleet scan        # ingest local transcripts
+python -m claudefleet sync        # push new usage to the server
+python -m claudefleet heartbeat   # liveness ping
+```
+
+Schedule `scan` + `sync` (e.g. every 15 min) and `heartbeat` (every 5 min) with
+Windows Task Scheduler — see [agent/README.md](agent/README.md).
+
+> Full walkthrough with troubleshooting: [docs/RUNNING.md](docs/RUNNING.md).
 
 ## Agent — local mode (works today, no server required)
 
@@ -59,7 +105,9 @@ python -m claudefleet stats                           # all-time
 ## Tests
 
 ```bash
-cd agent && python -m pytest    # 33 tests (parser, store, scanner, pricing, identity)
+cd agent  && python -m pytest    # 33 tests — parser, store, scanner, pricing, identity
+cd server && python -m pytest    # 14 tests — auth, register, sync/dedup, dashboard, RBAC scoping
+cd web    && npm run build        # type-check + production build
 ```
 
 See [docs/CENTRALIZATION_PLAN.md](docs/CENTRALIZATION_PLAN.md) for the roadmap and
