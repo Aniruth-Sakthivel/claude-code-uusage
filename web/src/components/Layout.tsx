@@ -5,6 +5,7 @@ import { useTheme } from "../lib/useTheme";
 
 const NAV = [
   { to: "/dashboard", label: "Overview", end: true },
+  { to: "/connect", label: "Connect PC" },
   { to: "/systems", label: "Systems" },
   { to: "/projects", label: "Projects" },
 ];

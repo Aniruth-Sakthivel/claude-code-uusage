@@ -28,7 +28,7 @@ export function Register() {
     setBusy(true); setError(null);
     try {
       await register(form.email, form.full_name, form.password);
-      navigate("/login");   // admin lands on the "Set up this machine" panel
+      navigate("/connect");
     } catch (err) {
       setError((err as Error).message || "Registration failed.");
     } finally { setBusy(false); }
@@ -57,7 +57,8 @@ export function Register() {
               <h1 className="mb-1 text-[17px] font-semibold">Registration is closed</h1>
               <p className="text-[13px]" style={{ color: "var(--ink-2)" }}>
                 An administrator already exists. Ask an admin to create your account, then
-                sign in with the credentials they give you.
+                sign in with the credentials they give you, then go to{" "}
+                <strong>Connect PC</strong> in the sidebar to install the agent on your machine.
               </p>
               <div className="mt-5"><Link to="/login"><Button>Go to sign in</Button></Link></div>
             </div>

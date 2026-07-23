@@ -131,16 +131,21 @@ the single line above covers local scanning.)*
 
 ## 7. Send data to the central server (optional)
 
-Local scanning is enough for one machine. To feed a central dashboard, an
-administrator creates an **API key** for this PC in the web app
-(Admin → Agent API keys), then:
+Local scanning is enough for one machine. To feed a central dashboard:
+
+1. Sign in to the web app and open **Connect PC** (or ask your admin for an API key).
+2. On the PC, install the agent — **you do not need the full repository**:
 
 ```powershell
-python -m claudefleet register --server http://SERVER:8000 --api-key cfk_... --display-name PC-01
-python -m claudefleet scan        # ingest locally
-python -m claudefleet sync        # push new events to the server
-python -m claudefleet heartbeat   # liveness ping
+pip install claudefleet-agent
+claudefleet register --server https://YOUR-DASHBOARD-URL --api-key cfk_... --display-name PC-01
+claudefleet scan
+claudefleet sync
 ```
+
+Or use the Windows installer from the repo (`deploy/install.ps1`).
+
+An administrator can also create an **API key** under Admin → Agent API keys, then share the key and dashboard URL with each user.
 
 `sync` only sends events the server hasn't seen; if the server is down it simply
 retries next time (nothing is lost, nothing is double-counted).

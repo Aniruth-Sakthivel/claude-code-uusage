@@ -88,49 +88,46 @@ export function Landing() {
 
       {/* getting started */}
       <section id="get-started" className="mx-auto max-w-[1080px] px-6 py-10">
-        <h2 className="text-[22px] font-semibold tracking-tight">Get started in three steps</h2>
+        <h2 className="text-[22px] font-semibold tracking-tight">Get started</h2>
         <p className="mt-1.5 text-[14px]" style={{ color: "var(--ink-2)" }}>
-          Run the Python backend once — it creates its database and an admin account automatically.
+          Most users only need the dashboard URL and an API key — no full project download.
         </p>
 
-        <div className="mt-6 grid gap-5 md:grid-cols-3">
-          <div>
-            <h3 className="mb-2 text-[14px] font-semibold">1 · Start the server (run once)</h3>
-            <Code>{`cd server
-pip install -e .
-python run.py`}</Code>
-            <p className="mt-2 text-[12px]" style={{ color: "var(--ink-2)" }}>
-              Starts the API on <b>:8000</b>. On first run you'll create your admin
-              account in the web app (step 2).
+        <div className="mt-6 grid gap-5 lg:grid-cols-2">
+          <div className="rounded-2xl border p-5"
+            style={{ background: "var(--surface)", borderColor: "var(--border)", boxShadow: "var(--shadow)" }}>
+            <h3 className="mb-1 text-[15px] font-semibold">For PC users</h3>
+            <p className="mb-4 text-[13px]" style={{ color: "var(--ink-2)" }}>
+              Sign in, open <b>Connect PC</b>, paste your API key, and run the commands on your machine.
+            </p>
+            <Code>{`pip install claudefleet-agent
+claudefleet register --server ${typeof window !== "undefined" ? window.location.origin : "https://YOUR-SITE"} \\
+  --api-key cfk_... --display-name PC-01
+claudefleet scan
+claudefleet sync`}</Code>
+            <p className="mt-3 text-[12px]" style={{ color: "var(--ink-2)" }}>
+              Your admin creates your login and sends the API key. Scanning runs locally — the browser cannot do it.
             </p>
           </div>
-          <div>
-            <h3 className="mb-2 text-[14px] font-semibold">2 · Open the dashboard</h3>
-            <Code>{`cd web
-npm install
-npm run dev`}</Code>
-            <p className="mt-2 text-[12px]" style={{ color: "var(--ink-2)" }}>
-              Visit <b>http://localhost:5173</b>, create the admin account, then name your first machine.
+
+          <div className="rounded-2xl border p-5"
+            style={{ background: "var(--surface)", borderColor: "var(--border)", boxShadow: "var(--shadow)" }}>
+            <h3 className="mb-1 text-[15px] font-semibold">For administrators (self-hosting)</h3>
+            <p className="mb-4 text-[13px]" style={{ color: "var(--ink-2)" }}>
+              Deploy the API and dashboard once, then enroll each PC from Connect PC or Admin → Agent API keys.
             </p>
-          </div>
-          <div>
-            <h3 className="mb-2 text-[14px] font-semibold">3 · Scan a PC</h3>
-            <Code>{`cd agent
-python -m claudefleet scan
-python -m claudefleet register \\
-  --server http://SERVER:8000 \\
-  --api-key <key> --display-name PC-01
-python -m claudefleet sync`}</Code>
-            <p className="mt-2 text-[12px]" style={{ color: "var(--ink-2)" }}>
-              The key comes from the setup panel after you sign in.
+            <Code>{`cd server && pip install -e . && python run.py
+cd web && npm install && npm run dev`}</Code>
+            <p className="mt-3 text-[12px]" style={{ color: "var(--ink-2)" }}>
+              See <code>docs/DEPLOY.md</code> for Netlify + Render production deployment.
             </p>
           </div>
         </div>
 
         <div className="mt-8">
-          <button onClick={() => navigate(user ? "/dashboard" : "/login")}
+          <button onClick={() => navigate(user ? "/connect" : "/login")}
             className="rounded-lg px-5 py-2.5 text-[14px] font-semibold text-white" style={{ background: "var(--accent)" }}>
-            {user ? "Open dashboard →" : "Sign in to continue →"}
+            {user ? "Connect a PC →" : "Sign in to continue →"}
           </button>
         </div>
       </section>

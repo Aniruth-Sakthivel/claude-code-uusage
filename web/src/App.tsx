@@ -10,6 +10,7 @@ import { Projects } from "./pages/Projects";
 import { AdminUsers } from "./pages/AdminUsers";
 import { AdminKeys } from "./pages/AdminKeys";
 import { AdminAudit } from "./pages/AdminAudit";
+import { Connect } from "./pages/Connect";
 import type { ReactNode } from "react";
 
 function Protected({ children }: { children: ReactNode }) {
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/connect" element={<Protected><Connect /></Protected>} />
           <Route path="/dashboard" element={<Protected><Overview /></Protected>} />
           <Route path="/systems" element={<Protected><Systems /></Protected>} />
           <Route path="/projects" element={<Protected><Projects /></Protected>} />

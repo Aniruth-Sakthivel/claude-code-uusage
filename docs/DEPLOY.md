@@ -61,8 +61,21 @@ The SPA fallback redirect in `netlify.toml` makes `/login`, `/register`,
 
 1. Open the Netlify URL → `/register` → create the admin account.
 2. Sign in → name your first machine → copy its API key.
-3. On each PC: `claudefleet register --server https://YOUR-BACKEND-HOST --api-key cfk_... --display-name PC-01`,
-   then `claudefleet scan && claudefleet sync`.
+3. On each PC: open **Connect PC** in the dashboard (or run `deploy/install.ps1`):
+
+```powershell
+pip install claudefleet-agent
+claudefleet register --server https://YOUR-NETLIFY-SITE --api-key cfk_... --display-name PC-01
+claudefleet scan && claudefleet sync
+```
+
+Or one command on Windows:
+
+```powershell
+irm https://YOUR-NETLIFY-SITE/install.ps1 | iex -Args "-Server https://YOUR-NETLIFY-SITE -ApiKey cfk_... -Name PC-01"
+```
+
+Host `deploy/install.ps1` on your static site or CDN so users can fetch it.
 
 ---
 

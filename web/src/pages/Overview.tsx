@@ -76,13 +76,13 @@ export function Overview() {
           <CardHead title="Usage over time" hint="Tracked tokens per system" />
           {ts.isLoading ? <Spinner /> : ts.data && ts.data.systems.length > 0
             ? <TimeseriesChart data={ts.data} />
-            : <EmptyState title="No usage yet" hint="Once agents sync, activity appears here." />}
+            : <EmptyState title="No usage yet" hint="Install the agent on a PC — open Connect PC in the sidebar for step-by-step commands." />}
         </Card>
 
         <Card>
           <CardHead title="Systems" hint="Status & activity" />
           {systems.isLoading ? <Spinner /> : (systems.data?.length ?? 0) === 0
-            ? <EmptyState title="No systems registered" hint="Add a system in Admin to enroll a PC." />
+            ? <EmptyState title="No systems registered" hint="Open Connect PC to enroll a machine and get install commands." />
             : (
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse">

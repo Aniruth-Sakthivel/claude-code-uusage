@@ -1,12 +1,21 @@
 import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { ApiKeyRow, SystemRow } from "../api/types";
 import { Button, Card, CardHead, EmptyState, Spinner } from "../components/ui";
 import { fmtRelative } from "../lib/format";
+import { stashConnectInfo } from "../lib/agentSetup";
 
 // A freshly-minted key is shown exactly once — the server only stores its hash.
-function KeyReveal({ value, onClose }: { value: string; onClose: () => void }) {
+function KeyReveal({ value, displayName, onClose }: { value: string; displayName?: string; onClose: () => void }) {
+  const navigate = useNavigate();
+
+  function goConnect() {
+    stashConnectInfo(value, displayName);
+    navigate("/connect");
+  }
+
   return (
     <div className="mb-4 rounded-xl border p-4" style={{ background: "var(--accent-weak)", borderColor: "var(--accent)" }}>
       <div className="mb-1 text-[12.5px] font-semibold" style={{ color: "var(--accent)" }}>
@@ -16,6 +25,7 @@ function KeyReveal({ value, onClose }: { value: string; onClose: () => void }) {
         <code className="flex-1 overflow-x-auto rounded-lg px-3 py-2 text-[12.5px]"
           style={{ background: "var(--surface)", color: "var(--ink)" }}>{value}</code>
         <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(value)}>Copy</Button>
+        <Button onClick={goConnect}>Setup instructions →</Button>
         <Button variant="ghost" onClick={onClose}>Done</Button>
       </div>
     </div>
@@ -28,6 +38,7 @@ export function AdminKeys() {
   const [selected, setSelected] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [revealed, setRevealed] = useState<string | null>(null);
+  const [revealedFor, setRevealedFor] = useState<string | null>(null);
 
   const sysId = selected ?? systems.data?.[0]?.system_id ?? null;
   const keys = useQuery({
@@ -38,7 +49,13 @@ export function AdminKeys() {
 
   const addSystem = useMutation({
     mutationFn: () => api.post<{ api_key: string; system: SystemRow }>("/api/v1/admin/systems", { display_name: newName }),
-    onSuccess: (r) => { setRevealed(r.api_key); setNewName(""); qc.invalidateQueries({ queryKey: ["systems"] }); },
+    onSuccess: (r) => {
+      setRevealed(r.api_key);
+      setRevealedFor(r.system.display_name);
+      stashConnectInfo(r.api_key, r.system.display_name);
+      setNewName("");
+      qc.invalidateQueries({ queryKey: ["systems"] });
+    },
   });
   const addKey = useMutation({
     mutationFn: () => api.post<{ api_key: string }>(`/api/v1/admin/systems/${sysId}/keys`, { name: "key" }),
@@ -63,7 +80,18 @@ export function AdminKeys() {
         Each PC authenticates with its own key. Keys are hashed at rest and revealed once.
       </p>
 
-      {revealed && <KeyReveal value={revealed} onClose={() => setRevealed(null)} />}
+      {revealed && (
+        <KeyReveal
+          value={revealed}
+          displayName={revealedFor ?? undefined}
+          onClose={() => { setRevealed(null); setRevealedFor(null); }}
+        />
+      )}
+
+      <p className="mb-4 text-[13px]" style={{ color: "var(--ink-2)" }}>
+        After creating a key, open <Link to="/connect" style={{ color: "var(--accent)" }}>Connect PC</Link>{" "}
+        for copy-paste install commands to send to each user.
+      </p>
 
       <Card className="mb-4">
         <CardHead title="Enroll a new system" />

@@ -3,7 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import type { SystemCreated } from "../api/types";
+import { ConnectInstructions } from "../components/ConnectInstructions";
 import { Button } from "../components/ui";
+import { stashConnectInfo } from "../lib/agentSetup";
 
 const ENVIRONMENTS = ["", "dev", "build", "lab", "prod", "other"];
 
@@ -15,14 +17,14 @@ export function Login() {
   const navigate = useNavigate();
   const [phase, setPhase] = useState<"signin" | "setup">("signin");
 
-  // Already signed in and visiting /login: admins get the setup panel, others go home.
+  // Already signed in: admins get setup panel; others go to Connect PC.
   useEffect(() => {
-    if (user) user.role === "admin" ? setPhase("setup") : navigate("/dashboard");
+    if (user) user.role === "admin" ? setPhase("setup") : navigate("/connect");
   }, [user, navigate]);
 
   return (
     <div className="grid min-h-screen place-items-center px-4 py-10">
-      <div className="w-full max-w-[420px]">
+      <div className={`w-full ${phase === "setup" ? "max-w-[720px]" : "max-w-[420px]"}`}>
         <div className="mb-6 flex items-center gap-3">
           <div className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold text-white"
             style={{ background: "linear-gradient(135deg, var(--pc1), var(--accent))" }}>CF</div>
@@ -33,8 +35,8 @@ export function Login() {
         </div>
 
         {phase === "signin"
-          ? <SignInCard onDone={(role) => (role === "admin" ? setPhase("setup") : navigate("/dashboard"))} login={login} />
-          : <SetupCard onContinue={() => navigate("/dashboard")} />}
+          ? <SignInCard onDone={(role) => (role === "admin" ? setPhase("setup") : navigate("/connect"))} login={login} />
+          : <SetupCard onContinue={() => navigate("/connect")} />}
 
         <p className="mt-4 text-center text-[11.5px]" style={{ color: "var(--muted)" }}>
           Tracked activity is an estimate — not official Claude Max/Pro quota.
@@ -104,6 +106,7 @@ function SetupCard({ onContinue }: { onContinue: () => void }) {
       const res = await api.post<SystemCreated>("/api/v1/admin/systems", form);
       setApiKey(res.api_key);
       setCreated(res.system.display_name);
+      stashConnectInfo(res.api_key, res.system.display_name);
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
@@ -135,12 +138,13 @@ function SetupCard({ onContinue }: { onContinue: () => void }) {
                 style={{ background: "var(--surface)", color: "var(--ink)" }}>{apiKey}</code>
               <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(apiKey)}>Copy</Button>
             </div>
-            <div className="mt-2 text-[11.5px]" style={{ color: "var(--ink-2)" }}>
-              On that PC run: <code>claudefleet register --server &lt;url&gt; --api-key {apiKey.slice(0, 12)}…</code>
-            </div>
+          </div>
+          <div className="mb-4 max-h-[320px] overflow-y-auto rounded-xl border p-3"
+            style={{ borderColor: "var(--border)" }}>
+            <ConnectInstructions apiKey={apiKey} displayName={created ?? "PC-01"} />
           </div>
           <div className="flex gap-2">
-            <Button onClick={onContinue}>Continue to dashboard</Button>
+            <Button onClick={onContinue}>Continue to Connect PC →</Button>
             <Button variant="ghost" onClick={addAnother}>Add another system</Button>
           </div>
         </div>
