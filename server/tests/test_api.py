@@ -24,14 +24,13 @@ def test_provision_closes_after_bootstrap(client, admin_token):
     # admin_token fixture already provisioned the bootstrapped admin; a second,
     # never-before-seen Supabase identity must be rejected (no local account).
     assert client.get("/api/v1/auth/registration-open").json()["open"] is False
-    email = f"second-{uuid.uuid4().hex[:8]}@test.local"
-    from app.config import get_settings
-    from supabase import create_client
-    settings = get_settings()
-    sb = create_client(settings.supabase_url, settings.supabase_anon_key)
-    result = sb.auth.sign_up({"email": email, "password": "password123"})
-    r = client.post("/api/v1/auth/provision",
-                    headers=auth_header(result.session.access_token))
+    email = f"second-{uuid.uuid4().hex[:8]}@example.com"
+    password = "password123"
+    from app.core import supabase_admin
+    supabase_admin.get_admin_client().auth.admin.create_user({
+        "email": email, "password": password, "email_confirm": True})
+    token = supabase_sign_in(email, password)
+    r = client.post("/api/v1/auth/provision", headers=auth_header(token))
     assert r.status_code == 403
 
 
@@ -43,8 +42,10 @@ def test_bootstrap_admin_login(client):
     assert r.status_code == 200 and r.json()["role"] == "admin"
 
 
-def test_first_supabase_user_becomes_admin(client):
-    email = f"boss-{uuid.uuid4().hex[:8]}@test.local"
+def test_first_supabase_user_becomes_admin(client_no_bootstrap_admin):
+    client = client_no_bootstrap_admin
+    assert client.get("/api/v1/auth/registration-open").json()["open"] is True
+    email = f"boss-{uuid.uuid4().hex[:8]}@example.com"
     tok = supabase_sign_up(client, email, "password123", full_name="Boss")
     assert client.get("/api/v1/auth/me", headers=auth_header(tok)).json()["role"] == "admin"
 
@@ -113,8 +114,9 @@ def test_developer_only_sees_assigned_systems(client, admin_token):
     client.post("/api/v1/usage/sync", json={"events": [make_event("b", tokens=400)]},
                 headers=auth_header(k2))
 
-    _create_user(client, admin_token, "dev@test.local", "developer", system_ids=[s1])
-    dev = _login(client, "dev@test.local")
+    email = f"dev-{uuid.uuid4().hex[:8]}@example.com"
+    _create_user(client, admin_token, email, "developer", system_ids=[s1])
+    dev = _login(client, email)
 
     systems = client.get("/api/v1/systems", headers=auth_header(dev)).json()
     ids = {s["system_id"] for s in systems}
@@ -127,16 +129,18 @@ def test_developer_only_sees_assigned_systems(client, admin_token):
 
 
 def test_developer_cannot_manage_users(client, admin_token):
-    _create_user(client, admin_token, "dev@test.local", "developer")
-    dev = _login(client, "dev@test.local")
+    email = f"dev-{uuid.uuid4().hex[:8]}@example.com"
+    _create_user(client, admin_token, email, "developer")
+    dev = _login(client, email)
     r = client.get("/api/v1/admin/users", headers=auth_header(dev))
     assert r.status_code == 403
 
 
 def test_viewer_sees_all_but_cannot_admin(client, admin_token):
     _create_system(client, admin_token, "PC-01")
-    _create_user(client, admin_token, "viewer@test.local", "viewer")
-    viewer = _login(client, "viewer@test.local")
+    email = f"viewer-{uuid.uuid4().hex[:8]}@example.com"
+    _create_user(client, admin_token, email, "viewer")
+    viewer = _login(client, email)
     assert client.get("/api/v1/systems", headers=auth_header(viewer)).status_code == 200
     assert client.post("/api/v1/admin/systems", json={"display_name": "x"},
                        headers=auth_header(viewer)).status_code == 403

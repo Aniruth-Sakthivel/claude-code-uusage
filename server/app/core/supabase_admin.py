@@ -32,6 +32,16 @@ def create_auth_user(email: str, password: str) -> str:
     return resp.user.id
 
 
+def find_auth_user_by_email(email: str) -> str | None:
+    """Return the Supabase user id for this email if an Auth account already
+    exists (e.g. the local DB was reset but Supabase Auth wasn't), else None."""
+    page = get_admin_client().auth.admin.list_users()
+    for user in page:
+        if user.email == email:
+            return user.id
+    return None
+
+
 def update_auth_user_password(supabase_user_id: str, password: str) -> None:
     get_admin_client().auth.admin.update_user_by_id(
         supabase_user_id, {"password": password})

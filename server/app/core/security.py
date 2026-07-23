@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from functools import lru_cache
 
 import jwt
 
@@ -17,13 +18,20 @@ settings = get_settings()
 
 
 # ── JWT ──────────────────────────────────────────────────────────────────────
-# User sessions are issued and signed by Supabase Auth; the server only
-# verifies them here. Agent API keys (below) remain a fully separate,
-# app-issued credential.
+# User sessions are issued and signed by Supabase Auth (ES256, asymmetric —
+# this project's JWT signing keys are not a shared secret). The server
+# verifies them against Supabase's public JWKS endpoint. Agent API keys
+# (below) remain a fully separate, app-issued credential.
+@lru_cache
+def _jwks_client() -> jwt.PyJWKClient:
+    return jwt.PyJWKClient(f"{settings.supabase_url}/auth/v1/.well-known/jwks.json")
+
+
 def decode_supabase_token(token: str) -> dict:
+    signing_key = _jwks_client().get_signing_key_from_jwt(token)
     return jwt.decode(
-        token, settings.supabase_jwt_secret, algorithms=["HS256"],
-        audience="authenticated")
+        token, signing_key.key, algorithms=["ES256"], audience="authenticated",
+        leeway=10)
 
 
 # ── agent API keys ─────────────────────────────────────────────────────────────

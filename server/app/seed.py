@@ -36,8 +36,12 @@ def _bootstrap_admin(db: Session) -> None:
         return
 
     admin_role = db.execute(select(Role).where(Role.name == "admin")).scalar_one()
-    supabase_user_id = supabase_admin.create_auth_user(
-        settings.bootstrap_admin_email, settings.bootstrap_admin_password)
+    # Idempotent: if the local DB was reset but the Supabase Auth account
+    # survived (e.g. re-seeding, test DB reset), reuse it instead of erroring.
+    supabase_user_id = supabase_admin.find_auth_user_by_email(settings.bootstrap_admin_email)
+    if supabase_user_id is None:
+        supabase_user_id = supabase_admin.create_auth_user(
+            settings.bootstrap_admin_email, settings.bootstrap_admin_password)
     user = User(
         email=settings.bootstrap_admin_email,
         full_name=settings.bootstrap_admin_full_name or "Administrator",

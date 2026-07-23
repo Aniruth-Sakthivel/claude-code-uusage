@@ -15,11 +15,12 @@ class Settings(BaseSettings):
 
     # Supabase (Project Settings -> API). anon_key is the public/publishable
     # key (also used by the frontend); service_role_key is server-only and
-    # can create/delete Auth users; jwt_secret verifies Supabase-issued JWTs.
+    # can create/delete Auth users. JWTs are verified against Supabase's
+    # public JWKS endpoint (this project signs with ES256) — no shared
+    # secret needed.
     supabase_url: str | None = None
     supabase_anon_key: str | None = None
     supabase_service_role_key: str | None = None
-    supabase_jwt_secret: str | None = None
 
     # Optional bootstrap admin credentials. If set and there are no users,
     # the server creates this admin automatically at startup.
