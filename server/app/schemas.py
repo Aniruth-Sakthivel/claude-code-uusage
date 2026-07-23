@@ -13,25 +13,8 @@ EmailStr = str
 
 
 # ── auth ──────────────────────────────────────────────────────────────────────
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class AdminRegisterRequest(BaseModel):
-    """First-run registration — creates the initial admin (zero-users only)."""
-    email: EmailStr
-    full_name: str = ""
-    password: str = Field(min_length=8)
-
-
 class RegistrationStatus(BaseModel):
     open: bool
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
 
 
 class UserOut(BaseModel):

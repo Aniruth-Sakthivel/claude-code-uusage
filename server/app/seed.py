@@ -1,8 +1,10 @@
 """Idempotent seed: ensures the four roles exist.
 
-The first admin **user** is not seeded — it is created from the UI on first run
-via ``POST /api/v1/auth/register``, which is open only while there are zero
-users. After that, all users are created by an admin.
+The first admin **user** is not seeded by default — it is provisioned the
+first time a Supabase-authenticated user calls ``POST /api/v1/auth/provision``
+while zero users exist. After that, all users are created by an admin.
+``bootstrap_admin_*`` settings are an optional alternate path to create the
+first admin (and its Supabase Auth account) automatically at startup.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .core import security
+from .core import supabase_admin
 from .core.rbac import ROLE_DESCRIPTIONS, ROLES
 from .models import AuditLog, Role, User
 
@@ -34,10 +36,12 @@ def _bootstrap_admin(db: Session) -> None:
         return
 
     admin_role = db.execute(select(Role).where(Role.name == "admin")).scalar_one()
+    supabase_user_id = supabase_admin.create_auth_user(
+        settings.bootstrap_admin_email, settings.bootstrap_admin_password)
     user = User(
         email=settings.bootstrap_admin_email,
         full_name=settings.bootstrap_admin_full_name or "Administrator",
-        hashed_password=security.hash_password(settings.bootstrap_admin_password),
+        supabase_user_id=supabase_user_id,
         role_id=admin_role.id,
     )
     db.add(user)

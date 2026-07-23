@@ -1,11 +1,5 @@
-// Thin fetch wrapper: injects the JWT, parses JSON, throws typed errors.
-const TOKEN_KEY = "claudefleet_token";
-
-export const tokenStore = {
-  get: () => localStorage.getItem(TOKEN_KEY),
-  set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
-};
+// Thin fetch wrapper: injects the Supabase session JWT, parses JSON, throws typed errors.
+import { supabase } from "../lib/supabase";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -14,17 +8,17 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = tokenStore.get();
+  const { data: { session } } = await supabase.auth.getSession();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
 
   const res = await fetch(path, { ...options, headers });
   if (res.status === 401) {
-    tokenStore.clear();
-    if (!path.endsWith("/auth/login")) window.location.href = "/login";
+    await supabase.auth.signOut();
+    if (!path.endsWith("/auth/provision")) window.location.href = "/login";
   }
   if (!res.ok) {
     let detail = res.statusText;

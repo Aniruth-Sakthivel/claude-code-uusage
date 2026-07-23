@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import repositories as repo
-from .core import security
+from .core import security, supabase_admin
 from .core.rbac import ROLE_DESCRIPTIONS, ROLES, visible_system_ids
 from .models import ApiKey, AuditLog, Role, SyncLog, System, User, utcnow
 
@@ -220,8 +220,9 @@ def _assign_systems(db: Session, user: User, system_ids: list[str]) -> None:
 def create_user(db: Session, actor: User, data) -> User:
     if db.execute(select(User).where(User.email == data.email)).scalar_one_or_none():
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    supabase_user_id = supabase_admin.create_auth_user(data.email, data.password)
     user = User(email=data.email, full_name=data.full_name,
-                hashed_password=security.hash_password(data.password),
+                supabase_user_id=supabase_user_id,
                 role_id=_require_role(db, data.role).id)
     db.add(user)
     db.flush()
@@ -238,7 +239,8 @@ def update_user(db: Session, actor: User, user_id: int, data) -> User:
     if data.full_name is not None:
         user.full_name = data.full_name
     if data.password is not None:
-        user.hashed_password = security.hash_password(data.password)
+        if user.supabase_user_id:
+            supabase_admin.update_auth_user_password(user.supabase_user_id, data.password)
     if data.role is not None:
         user.role_id = _require_role(db, data.role).id
     if data.is_active is not None:
@@ -256,6 +258,8 @@ def delete_user(db: Session, actor: User, user_id: int) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     if user.id == actor.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot delete yourself")
+    if user.supabase_user_id:
+        supabase_admin.delete_auth_user(user.supabase_user_id)
     audit(db, actor, "user.deleted", user.email, "")
     db.delete(user)
     db.commit()
@@ -283,35 +287,38 @@ def list_audit(db: Session, limit: int = 200) -> list[AuditLog]:
 
 
 # ── auth ──────────────────────────────────────────────────────────────────────
+# Supabase Auth owns credentials; the app DB only needs a local User row per
+# Supabase identity to carry role + system-scoping (RBAC). "Registration" here
+# means provisioning that local row the first time a Supabase user is seen.
 def registration_open(db: Session) -> bool:
-    """First-run registration is available only while there are no users."""
+    """First-run: the initial Supabase user to appear becomes admin."""
     return db.execute(select(User)).first() is None
 
 
-def register_admin(db: Session, data) -> User:
-    """Create the initial administrator. Allowed only when no users exist."""
+def provision_user(db: Session, supabase_user_id: str, email: str,
+                   full_name: str = "") -> User:
+    """Ensure a local User row exists for this Supabase identity.
+
+    The first user ever provisioned becomes admin (first-run bootstrap);
+    everyone after that is created by an admin via /admin/users, so a
+    Supabase-authenticated user with no local row here has no account yet.
+    """
+    user = db.execute(
+        select(User).where(User.supabase_user_id == supabase_user_id)
+    ).scalar_one_or_none()
+    if user is not None:
+        return user
+
     if not registration_open(db):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Registration is closed. Ask an administrator to create your account.")
+            "No account for this login. Ask an administrator to create your account.")
+
     admin_role = _require_role(db, "admin")
-    user = User(email=data.email, full_name=data.full_name or "Administrator",
-                hashed_password=security.hash_password(data.password),
-                role_id=admin_role.id)
+    user = User(email=email, full_name=full_name or "Administrator",
+                supabase_user_id=supabase_user_id, role_id=admin_role.id)
     db.add(user)
     db.flush()
-    audit(db, user, "auth.register_admin", data.email, "initial administrator")
-    db.commit()
-    return user
-
-
-def authenticate(db: Session, email: str, password: str) -> User:
-    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-    if user is None or not user.is_active or not security.verify_password(
-            password, user.hashed_password):
-        audit(db, None, "auth.login_failed", email, "")
-        db.commit()
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
-    audit(db, user, "auth.login", email, "")
+    audit(db, user, "auth.register_admin", email, "initial administrator")
     db.commit()
     return user

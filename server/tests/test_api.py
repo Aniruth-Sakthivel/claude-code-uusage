@@ -1,6 +1,6 @@
-import os
+import uuid
 
-from tests.conftest import auth_header, make_event
+from tests.conftest import auth_header, make_event, supabase_sign_in, supabase_sign_up
 
 
 def _create_system(client, admin_token, name):
@@ -20,32 +20,32 @@ def test_login_and_me(client, admin_token):
     assert r.json()["role"] == "admin"
 
 
-def test_login_bad_password(client, admin_token):
-    # admin_token fixture registered the admin; a wrong password must 401.
-    r = client.post("/api/v1/auth/login",
-                    json={"email": "admin@test.local", "password": "wrong"})
-    assert r.status_code == 401
-
-
-def test_bootstrap_admin_closes_registration(client):
+def test_provision_closes_after_bootstrap(client, admin_token):
+    # admin_token fixture already provisioned the bootstrapped admin; a second,
+    # never-before-seen Supabase identity must be rejected (no local account).
     assert client.get("/api/v1/auth/registration-open").json()["open"] is False
-    r = client.post("/api/v1/auth/register", json={
-        "email": "second@test.local", "full_name": "Second", "password": "password123"})
+    email = f"second-{uuid.uuid4().hex[:8]}@test.local"
+    from app.config import get_settings
+    from supabase import create_client
+    settings = get_settings()
+    sb = create_client(settings.supabase_url, settings.supabase_anon_key)
+    result = sb.auth.sign_up({"email": email, "password": "password123"})
+    r = client.post("/api/v1/auth/provision",
+                    headers=auth_header(result.session.access_token))
     assert r.status_code == 403
 
 
 def test_bootstrap_admin_login(client):
-    email = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL"]
-    password = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD"]
-    r = client.post("/api/v1/auth/login", json={"email": email, "password": password})
-    assert r.status_code == 200 and "access_token" in r.json()
+    import os
+    tok = supabase_sign_in(os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL"],
+                           os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD"])
+    r = client.get("/api/v1/auth/me", headers=auth_header(tok))
+    assert r.status_code == 200 and r.json()["role"] == "admin"
 
 
-def test_registered_admin_can_login_and_is_admin(client):
-    client.post("/api/v1/auth/register", json={
-        "email": "boss@test.local", "full_name": "Boss", "password": "password123"})
-    tok = client.post("/api/v1/auth/login",
-                      json={"email": "boss@test.local", "password": "password123"}).json()["access_token"]
+def test_first_supabase_user_becomes_admin(client):
+    email = f"boss-{uuid.uuid4().hex[:8]}@test.local"
+    tok = supabase_sign_up(client, email, "password123", full_name="Boss")
     assert client.get("/api/v1/auth/me", headers=auth_header(tok)).json()["role"] == "admin"
 
 
@@ -100,8 +100,9 @@ def _create_user(client, admin_token, email, role, system_ids=()):
 
 
 def _login(client, email):
-    return client.post("/api/v1/auth/login",
-                       json={"email": email, "password": "password123"}).json()["access_token"]
+    # _create_user provisions a real Supabase Auth account via the admin API,
+    # so sign in against Supabase directly (no local /login endpoint anymore).
+    return supabase_sign_in(email, "password123")
 
 
 def test_developer_only_sees_assigned_systems(client, admin_token):

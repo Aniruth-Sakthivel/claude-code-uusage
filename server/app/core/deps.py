@@ -17,18 +17,20 @@ from .rbac import can
 _bearer = HTTPBearer(auto_error=True)
 
 
-# ── human users (JWT) ───────────────────────────────────────────────────────────
+# ── human users (Supabase-issued JWT) ────────────────────────────────────────────
 def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
     invalid = HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     try:
-        payload = security.decode_access_token(creds.credentials)
-        user_id = int(payload["sub"])
+        payload = security.decode_supabase_token(creds.credentials)
+        supabase_user_id = payload["sub"]
     except Exception:
         raise invalid
-    user = db.get(User, user_id)
+    user = db.execute(
+        select(User).where(User.supabase_user_id == supabase_user_id)
+    ).scalar_one_or_none()
     if user is None or not user.is_active:
         raise invalid
     return user

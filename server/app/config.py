@@ -13,10 +13,13 @@ class Settings(BaseSettings):
     # Storage — SQLite by default; point at Postgres in production.
     database_url: str = "sqlite:///./claudefleet.db"
 
-    # Auth
-    jwt_secret: str = "dev-insecure-change-me"      # MUST be overridden in prod
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 720          # 12h
+    # Supabase (Project Settings -> API). anon_key is the public/publishable
+    # key (also used by the frontend); service_role_key is server-only and
+    # can create/delete Auth users; jwt_secret verifies Supabase-issued JWTs.
+    supabase_url: str | None = None
+    supabase_anon_key: str | None = None
+    supabase_service_role_key: str | None = None
+    supabase_jwt_secret: str | None = None
 
     # Optional bootstrap admin credentials. If set and there are no users,
     # the server creates this admin automatically at startup.

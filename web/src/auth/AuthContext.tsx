@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, tokenStore } from "../api/client";
+import { api } from "../api/client";
+import { supabase } from "../lib/supabase";
 import type { User } from "../api/types";
 
 interface AuthState {
@@ -7,7 +8,7 @@ interface AuthState {
   loading: boolean;
   login: (email: string, password: string) => Promise<User>;
   register: (email: string, fullName: string, password: string) => Promise<User>;
-  logout: () => void;
+  logout: () => Promise<void>;
   can: (capability: Capability) => boolean;
 }
 
@@ -27,33 +28,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!tokenStore.get()) { setLoading(false); return; }
-    api.get<User>("/api/v1/auth/me")
-      .then(setUser)
-      .catch(() => tokenStore.clear())
-      .finally(() => setLoading(false));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) { setLoading(false); return; }
+      api.get<User>("/api/v1/auth/me")
+        .then(setUser)
+        .catch(() => supabase.auth.signOut())
+        .finally(() => setLoading(false));
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setUser(null);
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   async function login(email: string, password: string) {
-    const { access_token } = await api.post<{ access_token: string }>(
-      "/api/v1/auth/login", { email, password });
-    tokenStore.set(access_token);
-    const me = await api.get<User>("/api/v1/auth/me");
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    // Ensures a local User row exists for this Supabase identity (first-run admin bootstrap).
+    const me = await api.post<User>("/api/v1/auth/provision");
     setUser(me);
     return me;
   }
 
   async function register(email: string, fullName: string, password: string) {
-    const { access_token } = await api.post<{ access_token: string }>(
-      "/api/v1/auth/register", { email, full_name: fullName, password });
-    tokenStore.set(access_token);
-    const me = await api.get<User>("/api/v1/auth/me");
+    const { error } = await supabase.auth.signUp({
+      email, password, options: { data: { full_name: fullName } },
+    });
+    if (error) throw error;
+    const me = await api.post<User>("/api/v1/auth/provision");
     setUser(me);
     return me;
   }
 
-  function logout() {
-    tokenStore.clear();
+  async function logout() {
+    await supabase.auth.signOut();
     setUser(null);
     window.location.href = "/";   // back to the public intro page
   }
