@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 720          # 12h
 
+    # Optional bootstrap admin credentials. If set and there are no users,
+    # the server creates this admin automatically at startup.
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
+    bootstrap_admin_full_name: str | None = None
+
     # The first admin account is created from the UI on first run (see
     # /api/v1/auth/register), which is open only while no users exist.
 

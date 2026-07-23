@@ -1,3 +1,5 @@
+import os
+
 from tests.conftest import auth_header, make_event
 
 
@@ -25,16 +27,18 @@ def test_login_bad_password(client, admin_token):
     assert r.status_code == 401
 
 
-def test_registration_open_then_closed(client):
-    assert client.get("/api/v1/auth/registration-open").json()["open"] is True
-    r = client.post("/api/v1/auth/register", json={
-        "email": "first@test.local", "full_name": "First", "password": "password123"})
-    assert r.status_code == 201 and "access_token" in r.json()
-    # once a user exists, registration is closed
+def test_bootstrap_admin_closes_registration(client):
     assert client.get("/api/v1/auth/registration-open").json()["open"] is False
-    r2 = client.post("/api/v1/auth/register", json={
+    r = client.post("/api/v1/auth/register", json={
         "email": "second@test.local", "full_name": "Second", "password": "password123"})
-    assert r2.status_code == 403
+    assert r.status_code == 403
+
+
+def test_bootstrap_admin_login(client):
+    email = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL"]
+    password = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD"]
+    r = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200 and "access_token" in r.json()
 
 
 def test_registered_admin_can_login_and_is_admin(client):

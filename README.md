@@ -40,9 +40,17 @@ pip install -e .
 python run.py                                      # serves http://127.0.0.1:8000
 ```
 
-First run auto-creates the SQLite database and seeds roles. Set a real secret in
-production: `set CLAUDEFLEET_JWT_SECRET=<random-32+ chars>` (PowerShell:
-`$env:CLAUDEFLEET_JWT_SECRET="..."`). API docs live at `http://127.0.0.1:8000/docs`.
+First run auto-creates the SQLite database and seeds roles.
+
+There are no built-in admin credentials. On first startup, create the first
+admin account from the web app on `/register`. If an admin user already exists,
+registration is closed and you must sign in with the existing admin email and
+password.
+
+Set a real JWT secret in production:
+`set CLAUDEFLEET_JWT_SECRET=<random-32+ chars>` (PowerShell:
+`$env:CLAUDEFLEET_JWT_SECRET="..."`). API docs live at
+`http://127.0.0.1:8000/docs`.
 
 ### 2 — Start the web dashboard
 

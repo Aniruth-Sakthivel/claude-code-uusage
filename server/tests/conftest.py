@@ -12,6 +12,7 @@ os.environ["CLAUDEFLEET_DATABASE_URL"] = f"sqlite:///{_DB.as_posix()}"
 os.environ["CLAUDEFLEET_JWT_SECRET"] = "test-secret"
 os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL"] = "admin@test.local"
 os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD"] = "adminpass123"
+os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_FULL_NAME"] = "Admin"
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -39,10 +40,11 @@ def auth_header(token: str) -> dict:
 
 @pytest.fixture
 def admin_token(client) -> str:
-    # First-run registration creates the initial admin and returns a token.
-    r = client.post("/api/v1/auth/register", json={
-        "email": "admin@test.local", "full_name": "Admin", "password": "adminpass123"})
-    assert r.status_code == 201, r.text
+    # Bootstrapped credentials are created at startup via env vars.
+    email = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL"]
+    password = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD"]
+    r = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
 
