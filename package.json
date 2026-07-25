@@ -16,6 +16,7 @@
     "typecheck": "npm run typecheck --workspace=api && npm run typecheck --workspace=web",
     "db:generate": "npm run db:generate --workspace=api",
     "db:migrate": "npm run db:migrate --workspace=api",
+    "db:seed-admin": "npm run db:seed-admin --workspace=api",
     "test": "npm run test --workspace=api"
   },
   "engines": {

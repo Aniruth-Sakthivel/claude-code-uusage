@@ -53,14 +53,19 @@ Fill in from your Supabase dashboard:
 | `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | **Settings → API** |
 | `DIRECT_URL` | **Connect → Session pooler** (port **5432**) — migrations only |
 
+Optionally override the default admin credentials with `ADMIN_EMAIL` /
+`ADMIN_PASSWORD` in `api/.env` before seeding (see
+[Default admin account](#default-admin-account)).
+
 > Use the **pooler**, not `db.<ref>.supabase.co`. Newer Supabase projects publish
 > no DNS for direct connections, and serverless functions exhaust them anyway.
 
 ### 2. Install and migrate
 
 ```bash
-npm install          # installs api/ and web/ (npm workspaces)
-npm run db:migrate   # creates the schema and seeds roles
+npm install            # installs api/ and web/ (npm workspaces)
+npm run db:migrate     # creates the schema and seeds roles
+npm run db:seed-admin  # creates the single default admin account
 ```
 
 ### 3. Run
@@ -71,12 +76,42 @@ npm run dev          # API on :8000, dashboard on :5173
 
 Open **http://localhost:5173**:
 
-1. **Create the admin account** — the first user to sign up becomes administrator.
-   Registration closes automatically afterwards.
+1. **Sign in as the default admin** — see
+   [Default admin account](#default-admin-account) below, then change the
+   password.
 2. **Connect this PC** — copy the single generated command, run it in PowerShell.
    It installs the agent, registers the machine, scans, syncs, and schedules
    scan + sync every 15 minutes.
 3. Usage appears on the dashboard after the first sync.
+
+### Default admin account
+
+`npm run db:seed-admin` provisions **one** administrator — the only account that
+exists on a fresh install:
+
+| Field | Value |
+|---|---|
+| Email | `admin@claudefleet.local` |
+| Password | `ChangeMe!2026` |
+| Role | Administrator |
+
+> **Change this password on first sign-in** (**Admin → Users & roles → edit**).
+> The default is published here, so it is public knowledge.
+
+Override the credentials before seeding by setting them in `api/.env`:
+
+```bash
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=<a strong password>
+ADMIN_FULL_NAME=Administrator
+```
+
+The command is idempotent — re-running it reuses the existing Supabase Auth
+identity, re-asserts the admin role, and resets the password to the configured
+value. Use it to recover locked-out access instead of creating a second admin.
+
+All other accounts are created by this admin; self-registration is closed once a
+user exists.
 
 ### 4. Add teammates
 
