@@ -254,14 +254,17 @@ export function renderInstallScript(opts: {
   displayName: string;
   repoUrl: string;
   exeUrl: string;
+  wsUrl?: string;
 }): string {
-  const { server, apiKey, displayName, repoUrl, exeUrl } = opts;
+  const { server, apiKey, displayName, repoUrl, exeUrl, wsUrl } = opts;
   // Single-quoted PowerShell literals; escape any embedded quote.
   const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
   return `# ClaudeFleet agent setup - generated for ${displayName}
-# This script installs the agent, connects this PC, runs a first scan,
-# and schedules scan+sync every 15 minutes.
+# This script installs the agent, connects this PC, and starts a persistent
+# daemon: scans every 60s (configurable) and, if enabled, streams status over
+# a WebSocket. A watchdog task checks every minute that the daemon is alive
+# and restarts it if not.
 
 $ErrorActionPreference = 'Stop'
 
@@ -270,8 +273,10 @@ $ApiKey      = ${q(apiKey)}
 $DisplayName = ${q(displayName)}
 $RepoUrl     = ${q(repoUrl)}
 $ExeUrl      = ${q(exeUrl)}
+$WsUrl       = ${q(wsUrl ?? "")}
 $InstallDir  = Join-Path $env:LOCALAPPDATA 'ClaudeFleet'
 $ExePath     = Join-Path $InstallDir 'claudefleet.exe'
+$HealthFile  = Join-Path $env:USERPROFILE '.claude\\claudefleet\\health.json'
 
 Write-Host ''
 Write-Host '=== ClaudeFleet setup ===' -ForegroundColor Cyan
@@ -330,29 +335,75 @@ if ($exe) {
 
 # --- 2. register this machine ------------------------------------------------
 Write-Host 'Connecting this PC to the dashboard...'
-& $runner @('register', '--server', $Server, '--api-key', $ApiKey, '--display-name', $DisplayName)
+$registerArgs = @('register', '--server', $Server, '--api-key', $ApiKey, '--display-name', $DisplayName)
+if ($WsUrl) { $registerArgs += @('--ws-url', $WsUrl) }
+& $runner $registerArgs
 
-# --- 3. first scan + sync -----------------------------------------------------
+# --- 3. first scan (immediate feedback; the daemon takes over from here) -----
 Write-Host 'Scanning Claude Code transcripts (this may take a moment)...'
 & $runner @('scan')
 Write-Host 'Sending usage to the dashboard...'
 & $runner @('sync')
 
-# --- 4. keep it up to date automatically --------------------------------------
-$taskName = 'ClaudeFleet Scan+Sync'
+# --- 4. resolve a single launch target for the daemon + watchdog -------------
+# Start-Process needs one concrete FilePath, not the "py -3" two-token form,
+# so the fallback path resolves the interpreter to its actual executable.
 if ($exe) {
-  $action = '"' + $exe + '" scan --quiet & "' + $exe + '" sync --quiet'
+  $launchFile = $exe
+  $launchArgs = @('daemon')
 } else {
-  $pyExe  = if ($py.Count -gt 1) { 'py -3' } else { 'python' }
-  $action = "$pyExe -m claudefleet scan --quiet & $pyExe -m claudefleet sync --quiet"
+  $pyCmd = Get-Command $py[0] -ErrorAction SilentlyContinue
+  $launchFile = if ($pyCmd) { $pyCmd.Source } else { $py[0] }
+  $launchArgs = if ($py.Count -gt 1) { $py[1..($py.Length-1)] + @('-m', 'claudefleet', 'daemon') } else { @('-m', 'claudefleet', 'daemon') }
 }
-schtasks /Delete /TN $taskName /F 2>&1 | Out-Null
-schtasks /Create /SC MINUTE /MO 15 /TN $taskName /TR "cmd /c $action" /ST 00:00 /F 2>&1 | Out-Null
+
+# --- 5. start the daemon now, and at every logon going forward ---------------
+Write-Host 'Starting the ClaudeFleet daemon (scans every 60s in the background)...'
+Start-Process -FilePath $launchFile -ArgumentList $launchArgs -WindowStyle Hidden
+
+$daemonTask = 'ClaudeFleet Daemon'
+$daemonAction = '"' + $launchFile + '" ' + ($launchArgs -join ' ')
+schtasks /Delete /TN $daemonTask /F 2>&1 | Out-Null
+schtasks /Create /SC ONLOGON /TN $daemonTask /TR $daemonAction /RL LIMITED /F 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 0) {
-  Write-Host 'Scheduled automatic scan + sync every 15 minutes.'
+  Write-Host 'Scheduled the daemon to start automatically at logon.'
 } else {
-  Write-Host 'Could not create the scheduled task (usage was still sent).' -ForegroundColor Yellow
-  Write-Host 'Run this in an elevated PowerShell to enable automatic updates.'
+  Write-Host 'Could not schedule the logon task (the daemon is still running now).' -ForegroundColor Yellow
+}
+
+# --- 6. watchdog: if the daemon dies, restart it within a minute -------------
+# A standalone .ps1 (not an inline schtasks /TR command) so the quoting stays
+# simple and easy to inspect/debug independently. Built from single-quoted
+# literal lines (no interpolation, no escaping) with only the few dynamic
+# values spliced in via string concatenation - deliberately avoiding
+# PowerShell's backtick escape character inside this generated JS template,
+# since a stray backtick here would terminate the JS string early.
+$watchdogPath = Join-Path $InstallDir 'watchdog.ps1'
+$watchdogArgsLiteral = ($launchArgs -join "','")
+$watchdogLines = @(
+  '$ErrorActionPreference = ''SilentlyContinue''',
+  '$stale = $true',
+  'if (Test-Path ''' + $HealthFile + ''') {',
+  '  try {',
+  '    $h = Get-Content ''' + $HealthFile + ''' -Raw | ConvertFrom-Json',
+  '    $updated = [DateTime]::Parse($h.updated_at).ToUniversalTime()',
+  '    if (((Get-Date).ToUniversalTime() - $updated).TotalSeconds -lt 180) { $stale = $false }',
+  '  } catch {}',
+  '}',
+  'if ($stale) {',
+  '  Start-Process -FilePath ''' + $launchFile + ''' -ArgumentList @(''' + $watchdogArgsLiteral + ''') -WindowStyle Hidden',
+  '}'
+)
+Set-Content -Path $watchdogPath -Value $watchdogLines -Encoding UTF8
+
+$watchdogTask = 'ClaudeFleet Daemon Watchdog'
+$watchdogAction = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $watchdogPath + '"'
+schtasks /Delete /TN $watchdogTask /F 2>&1 | Out-Null
+schtasks /Create /SC MINUTE /MO 1 /TN $watchdogTask /TR $watchdogAction /RL LIMITED /F 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+  Write-Host 'Watchdog active: checks every minute and restarts the daemon if it stops.'
+} else {
+  Write-Host 'Could not schedule the watchdog task.' -ForegroundColor Yellow
 }
 
 Write-Host ''

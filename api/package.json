@@ -6,6 +6,8 @@
   "description": "ClaudeFleet central API — Fastify + Drizzle on Supabase Postgres",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "ws-server": "tsx watch src/ws/server.ts",
+    "ws-server:prod": "node dist/ws/server.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
@@ -23,11 +25,13 @@
     "fastify": "^5.2.0",
     "jose": "^5.9.6",
     "pg": "^8.13.1",
+    "ws": "^8.21.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

@@ -52,6 +52,15 @@ const schema = z.object({
   AGENT_EXE_URL: z.string().optional(),
   /** Comma-separated CORS origins. Empty in production (same-origin on Netlify). */
   CORS_ORIGINS: z.string().default("http://localhost:5173,http://127.0.0.1:5173"),
+  /**
+   * Real-time WebSocket server — a separate persistent process (see
+   * src/ws/server.ts), NOT part of the Netlify function. Netlify Functions are
+   * stateless and cannot hold a socket open, so this always runs elsewhere
+   * (Railway/Fly/a VPS/etc.) and is reached via its own public URL.
+   */
+  WS_PORT: z.coerce.number().int().positive().default(8787),
+  /** wss://... URL agents/dashboards connect to. Unset = real-time push is off. */
+  PUBLIC_WS_URL: z.string().optional(),
 });
 
 const parsed = schema.safeParse({
@@ -69,6 +78,8 @@ const parsed = schema.safeParse({
   AGENT_REPO_URL: pick("AGENT_REPO_URL"),
   AGENT_EXE_URL: pick("AGENT_EXE_URL"),
   CORS_ORIGINS: pick("CORS_ORIGINS", "CLAUDEFLEET_CORS_ORIGINS"),
+  WS_PORT: pick("WS_PORT"),
+  PUBLIC_WS_URL: pick("PUBLIC_WS_URL"),
 });
 
 if (!parsed.success) {

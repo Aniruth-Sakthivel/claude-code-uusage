@@ -8,6 +8,11 @@
 
 Local mode needs no central server. Central-mode commands (register/sync/
 heartbeat) push usage to a central dashboard; see `--help` for each.
+
+`daemon` runs continuously: scans on a timer (default 60s, configurable via
+runtime.json or CLAUDEFLEET_* env vars) and, if configured, holds a WebSocket
+open for real-time status push. `health` reports the daemon's last-known
+state.
 """
 
 from __future__ import annotations
@@ -124,6 +129,7 @@ def cmd_stats(args):
 
 
 def cmd_register(args):
+    from .config import AgentConfig
     from .sync import SyncClient, SyncError
     ident = load_identity(display_name=args.display_name)
     ident.server_url = args.server.rstrip("/")
@@ -131,6 +137,14 @@ def cmd_register(args):
     if args.display_name:
         ident.display_name = args.display_name
     save_identity(ident)
+
+    if args.ws_url:
+        cfg = AgentConfig.load()
+        cfg.ws_enabled = True
+        cfg.ws_url = args.ws_url
+        cfg.save()
+        print(f"Real-time push configured: {args.ws_url}")
+
     try:
         resp = SyncClient(ident.server_url, ident.api_key).register(
             ident.display_name, ident.hostname, ident.agent_version)
@@ -172,6 +186,40 @@ def cmd_sync(args):
         store.close()
 
 
+def cmd_daemon(args):
+    from .daemon import run_daemon
+    run_daemon(display_name=args.display_name, db_path=args.db)
+
+
+def cmd_health(args):
+    from .health import HealthState
+    state = HealthState.load()
+    if state is None:
+        print("No daemon health data yet — is `claudefleet daemon` running?")
+        return
+    print()
+    _hr()
+    print("  ClaudeFleet daemon health")
+    _hr()
+    print(f"  PID:                 {state.pid}")
+    print(f"  Started:             {state.started_at}")
+    print(f"  Last update:         {state.updated_at}")
+    print(f"  Scans completed:     {state.scans_completed}")
+    print(f"  Scans failed:        {state.scans_failed}")
+    print(f"  Last scan:           {state.last_scan_at or 'never'}")
+    if state.last_scan_duration_ms is not None:
+        print(f"  Last scan duration:  {state.last_scan_duration_ms:.1f} ms")
+    if state.last_scan_error:
+        print(f"  Last scan error:     {state.last_scan_error}")
+    print(f"  WebSocket connected: {state.ws_connected}")
+    if state.ws_last_disconnect_reason:
+        print(f"  Last disconnect:     {state.ws_last_disconnect_reason}")
+    print(f"  Reconnect attempts:  {state.ws_reconnect_attempts}")
+    print(f"  Offline queue depth: {state.offline_queue_depth}")
+    _hr()
+    print()
+
+
 def cmd_identity(args):
     ident = load_identity(display_name=args.display_name)
     if args.set_display_name:
@@ -205,6 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--server", required=True, help="central API base URL")
     rg.add_argument("--api-key", required=True, help="agent API key (from admin)")
     rg.add_argument("--display-name", default=None)
+    rg.add_argument("--ws-url", default=None,
+                    help="enable real-time push over this WebSocket URL (optional)")
     rg.set_defaults(func=cmd_register)
 
     sub.add_parser("heartbeat", help="send a liveness heartbeat").set_defaults(func=cmd_heartbeat)
@@ -217,6 +267,17 @@ def build_parser() -> argparse.ArgumentParser:
     idp.add_argument("--display-name", default=None)
     idp.add_argument("--set-display-name", default=None)
     idp.set_defaults(func=cmd_identity)
+
+    dm = sub.add_parser(
+        "daemon",
+        help="run continuously: scheduled scans (config: runtime.json) + optional real-time push",
+    )
+    dm.add_argument("--display-name", default=None)
+    dm.set_defaults(func=cmd_daemon)
+
+    sub.add_parser("health", help="show the daemon's last-known status").set_defaults(
+        func=cmd_health
+    )
     return p
 
 

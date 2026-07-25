@@ -154,6 +154,8 @@ export interface ConnectResponse {
   install_command: string;
   /** Fallback for people who prefer running the steps themselves. */
   manual_commands: string;
+  /** Direct download link for the standalone claudefleet.exe, no command needed. */
+  exe_url: string;
   api_key: string;
   expires_at: string;
 }

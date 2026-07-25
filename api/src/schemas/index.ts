@@ -230,6 +230,8 @@ export const connectResponse = z.object({
   /** Full key, shown once, for users who prefer manual setup. */
   api_key: z.string(),
   manual_commands: z.string(),
+  /** Direct download for the standalone exe, for people who'd rather not paste a command. */
+  exe_url: z.string(),
 });
 
 export const systemStatusOut = z.object({

@@ -17,6 +17,9 @@ dependencies = []
 sync = ["httpx>=0.27"]
 dev = ["pytest>=8.0"]
 build = ["pyinstaller>=6.0"]
+# Powers `claudefleet daemon`'s WebSocket push. Local/REST modes stay
+# dependency-free on purpose; this is the one opt-in exception.
+realtime = ["websockets>=12.0"]
 
 [project.scripts]
 claudefleet = "claudefleet.cli:main"

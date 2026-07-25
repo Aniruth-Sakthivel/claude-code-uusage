@@ -1,7 +1,42 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git ls-remote *)"
+      "Bash(git ls-remote *)",
+      "Bash(kill %1)",
+      "Bash(python -m pip show pyinstaller)",
+      "Bash(python -m pip install --quiet pyinstaller)",
+      "Bash(python -m PyInstaller --onefile --name claudefleet --console --clean --distpath dist --workpath build --specpath . claudefleet/__main__.py)",
+      "Bash(./dist/claudefleet.exe --version)",
+      "Bash(./dist/claudefleet.exe --help)",
+      "Bash(rm -rf build dist claudefleet.spec)",
+      "Bash(python -m PyInstaller --onefile --name claudefleet --console --clean --distpath dist --workpath build --specpath . entry.py)",
+      "Bash(CLAUDEFLEET_DB=\"$\\(pwd\\)/dist/testscan.db\" ./dist/claudefleet.exe scan --quiet)",
+      "Bash(powershell.exe -NoProfile -Command '$e=$null; try { $tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('\\\\''/tmp/generated_install.ps1'\\\\''.Replace\\('\\\\''/'\\\\'','\\\\''\\\\'\\\\''\\), [ref]$tokens, [ref]$errs\\) | Out-Null; if \\($errs.Count -eq 0\\) { '\\\\''PARSE_OK'\\\\'' } else { $errs | ForEach-Object { $_.Message } } } catch { $_.Exception.Message }')",
+      "Bash(cp /tmp/generated_install.ps1 d:/Github/claud-code-usage/api/generated_install_test.ps1 && ls -la d:/Github/claud-code-usage/api/generated_install_test.ps1)",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\api\\\\generated_install_test.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; if \\($errs.Count -eq 0\\) { 'PARSE_OK' } else { $errs | ForEach-Object { $_.Message } })",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\install.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; if \\($errs.Count -eq 0\\) { 'PARSE_OK' } else { $errs | ForEach-Object { $_.Message } })",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\install.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; $errs | ForEach-Object { \"$\\($_.Extent.StartLineNumber\\): $\\($_.Message\\)\" })",
+      "Bash(xxd install.ps1)",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\orig_test.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; if \\($errs.Count -eq 0\\) { 'PARSE_OK' } else { $errs | ForEach-Object { \"$\\($_.Extent.StartLineNumber\\): $\\($_.Message\\)\" } })",
+      "Bash(xxd)",
+      "Bash(awk '{print NR\": \"$0}' orig_test.ps1)",
+      "PowerShell($PSVersionTable.PSVersion; $tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\mini_test.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; if \\($errs.Count -eq 0\\) { 'PARSE_OK' } else { $errs | ForEach-Object { $_.Message } })",
+      "PowerShell(foreach \\($n in 10,20,30,40,50,60,70,84\\) { $f = \"D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\bisect_$n.ps1\"; $tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\($f, [ref]$tokens, [ref]$errs\\) | Out-Null; Write-Host \"$n : $\\($errs.Count\\) errors\" })",
+      "Bash(cd d:/Github/claud-code-usage/deploy && rm -f bisect_*.ps1)",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\orig_test.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; $tokens | Where-Object { $_.Extent.StartLineNumber -ge 74 -and $_.Extent.StartLineNumber -le 78 } | ForEach-Object { \"$\\($_.Extent.StartLineNumber\\),$\\($_.Extent.StartColumnNumber\\) [$\\($_.Kind\\)] '$\\($_.Text\\)'\" })",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\orig_test.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; $tokens | Where-Object { $_.Extent.StartLineNumber -le 50 -and $_.Kind -eq 'StringExpandable' -or $_.Kind -eq 'StringLiteral' } | ForEach-Object { \"$\\($_.Extent.StartLineNumber\\),$\\($_.Extent.StartColumnNumber\\)-$\\($_.Extent.EndLineNumber\\),$\\($_.Extent.EndColumnNumber\\) : $\\($_.Text.Substring\\(0,[Math]::Min\\(60,$_.Text.Length\\)\\)\\)\" })",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\deploy\\\\install.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; if \\($errs.Count -eq 0\\) { 'PARSE_OK' } else { $errs | ForEach-Object { \"$\\($_.Extent.StartLineNumber\\): $\\($_.Message\\)\" } })",
+      "Bash(python -m pip install --quiet pytest)",
+      "Bash(python -m pytest -q)",
+      "Bash(npx vitest *)",
+      "PowerShell($tokens=$null; $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile\\('D:\\\\Github\\\\claud-code-usage\\\\api\\\\generated_clean.ps1', [ref]$tokens, [ref]$errs\\) | Out-Null; if \\($errs.Count -eq 0\\) { 'PARSE_OK' } else { $errs | ForEach-Object { \"$\\($_.Extent.StartLineNumber\\): $\\($_.Message\\)\" } })",
+      "Bash(gh --version)",
+      "Bash(curl -s \"https://api.github.com/repos/Aniruth-Sakthivel/claude-code-uusage/releases\")",
+      "Bash(curl -sI -L \"https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/claudefleet.exe\")"
+    ],
+    "additionalDirectories": [
+      "\\tmp",
+      "D:\\Github\\claud-code-usage\\deploy"
     ]
   }
 }

@@ -112,8 +112,20 @@ export function ConnectPanel({
             <div className="mb-2 text-base font-medium">2. Paste this one line and press Enter</div>
             <CodeBlock code={result.install_command} />
             <p className="mt-2 text-sm text-muted">
-              This installs the agent, connects this PC, runs a first scan, and schedules
-              scan + sync every 15 minutes. Nothing else is needed afterwards.
+              This downloads the agent (a small .exe — no Python or install required),
+              connects this PC, runs a first scan, and keeps scanning every 60 seconds in
+              the background. Nothing else is needed afterwards.
+            </p>
+            <p className="mt-2 text-sm text-muted">
+              Prefer not to run a command?{" "}
+              <a
+                href={result.exe_url}
+                className="font-semibold text-accent underline underline-offset-2"
+              >
+                Download claudefleet.exe directly
+              </a>
+              , then run <code className="rounded bg-surface-2 px-1">claudefleet register</code>{" "}
+              yourself (see the manual steps below for the exact flags).
             </p>
           </li>
         </ol>
