@@ -1,48 +1,99 @@
+/** Per-project usage. Metadata only — never file contents. */
+
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { Project, SystemRow } from "../api/types";
-import { Card, CardHead, EmptyState, Spinner } from "../components/ui";
+import {
+  Card,
+  EmptyState,
+  ErrorState,
+  Eyebrow,
+  LoadingState,
+  Table,
+  Td,
+  Th,
+} from "../components/ui";
 import { fmtTokens } from "../lib/format";
 
 export function Projects() {
-  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.get<Project[]>("/api/v1/projects") });
-  const systems = useQuery({ queryKey: ["systems"], queryFn: () => api.get<SystemRow[]>("/api/v1/systems") });
+  const projects = useQuery({
+    queryKey: qk.projects,
+    queryFn: () => api.get<Project[]>("/projects"),
+  });
+  const systems = useQuery({
+    queryKey: qk.systems,
+    queryFn: () => api.get<SystemRow[]>("/systems"),
+  });
+
+  useEffect(() => {
+    document.title = "Projects — ClaudeFleet";
+  }, []);
+
   const nameOf = new Map((systems.data ?? []).map((s) => [s.system_id, s.display_name]));
 
   return (
-    <div>
-      <h2 className="mb-1 text-[21px] font-semibold tracking-tight">Projects</h2>
-      <p className="mb-5 text-[13.5px]" style={{ color: "var(--ink-2)" }}>Token activity per project, per system (metadata only).</p>
+    <div className="flex flex-col gap-5">
+      <div>
+        <Eyebrow>Analytics</Eyebrow>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Projects</h1>
+        <p className="mt-1.5 text-base text-muted">
+          Token usage grouped by project directory, across your visible PCs.
+        </p>
+      </div>
+
       <Card>
-        <CardHead title="Projects" hint={`${projects.data?.length ?? 0} projects`} />
-        {projects.isLoading ? <Spinner /> : (projects.data?.length ?? 0) === 0
-          ? <EmptyState title="No project activity yet" />
-          : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="text-left text-[10.5px] uppercase tracking-[0.06em]" style={{ color: "var(--muted)" }}>
-                    {["Project", "System", "Total", "Input", "Output", "Cache", "Sessions"].map((h, i) => (
-                      <th key={h} className={`px-3 pb-2.5 font-semibold ${i >= 2 ? "text-right" : ""}`}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(projects.data ?? []).map((p) => (
-                    <tr key={p.system_id + p.project_name} className="text-[13px]" style={{ borderTop: "1px solid var(--border)" }}>
-                      <td className="px-3 py-3 font-medium">{p.project_name}</td>
-                      <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{nameOf.get(p.system_id) ?? p.system_id.slice(0, 8)}</td>
-                      <td className="tnum px-3 py-3 text-right font-semibold">{fmtTokens(p.total_tokens)}</td>
-                      <td className="tnum px-3 py-3 text-right" style={{ color: "var(--ink-2)" }}>{fmtTokens(p.input_tokens)}</td>
-                      <td className="tnum px-3 py-3 text-right" style={{ color: "var(--ink-2)" }}>{fmtTokens(p.output_tokens)}</td>
-                      <td className="tnum px-3 py-3 text-right" style={{ color: "var(--ink-2)" }}>{fmtTokens(p.cache_read_tokens + p.cache_creation_tokens)}</td>
-                      <td className="tnum px-3 py-3 text-right" style={{ color: "var(--ink-2)" }}>{p.sessions}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        {projects.isLoading ? (
+          <LoadingState />
+        ) : projects.isError ? (
+          <ErrorState error={projects.error} onRetry={() => projects.refetch()} />
+        ) : projects.data!.length === 0 ? (
+          <EmptyState
+            title="No project activity yet"
+            hint="Projects appear once a connected PC syncs its transcripts."
+          />
+        ) : (
+          <Table caption="Projects ranked by tracked tokens">
+            <thead>
+              <tr>
+                <Th>Project</Th>
+                <Th>PC</Th>
+                <Th align="right">Input</Th>
+                <Th align="right">Output</Th>
+                <Th align="right">Cache</Th>
+                <Th align="right">Sessions</Th>
+                <Th align="right">Total</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.data!.map((p) => (
+                <tr key={`${p.system_id}:${p.project_name}`}>
+                  <Td className="font-medium">{p.project_name}</Td>
+                  <Td className="text-ink-2">
+                    {nameOf.get(p.system_id) ?? p.system_id.slice(0, 8)}
+                  </Td>
+                  <Td align="right" className="tnum text-ink-2">
+                    {fmtTokens(p.input_tokens)}
+                  </Td>
+                  <Td align="right" className="tnum text-ink-2">
+                    {fmtTokens(p.output_tokens)}
+                  </Td>
+                  <Td align="right" className="tnum text-ink-2">
+                    {fmtTokens(p.cache_read_tokens + p.cache_creation_tokens)}
+                  </Td>
+                  <Td align="right" className="tnum text-ink-2">
+                    {p.sessions}
+                  </Td>
+                  <Td align="right" className="tnum font-semibold">
+                    {fmtTokens(p.total_tokens)}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
       </Card>
     </div>
   );

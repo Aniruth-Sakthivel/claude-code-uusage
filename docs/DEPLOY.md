@@ -1,88 +1,152 @@
 # Deployment
 
-ClaudeFleet has three parts with different hosting needs:
+ClaudeFleet deploys as **one Netlify site**. The dashboard is served as static
+files and the API runs as a serverless function on the same origin, so there is
+no second host to pay for and no CORS to configure.
 
 | Part | What it is | Where it runs |
 |---|---|---|
-| `web/` | React static site | **Netlify** (or any static host) |
-| `server/` | FastAPI + DB (long-running) | **Render / Railway / Fly.io / a VM** — *not Netlify* |
-| `agent/` | Per-PC scanner | On each PC (Windows Task Scheduler) |
-
-> **Why not the backend on Netlify?** Netlify serves static files and short-lived
-> serverless functions. It can't run a persistent uvicorn process, and it has no
-> writable disk for SQLite. Host the API on a platform that runs a Python web
-> service, then point Netlify's `/api/*` proxy at it.
+| `web/` | React dashboard | Netlify (static) |
+| `api/` | Fastify API | Netlify Functions |
+| Database | Postgres | Supabase |
+| `agent/` | Per-PC scanner | Each PC (Windows Task Scheduler) |
 
 ---
 
-## 1. Deploy the backend (do this first)
+## 1. Prepare Supabase
 
-Any Python host works. General steps:
+From your project dashboard:
 
-1. **Use Postgres, not SQLite**, for a real deployment (managed disks on PaaS are
-   usually ephemeral). Add a driver and set the URL:
-   ```bash
-   pip install "psycopg[binary]"
-   # env var on the host:
-   CLAUDEFLEET_DATABASE_URL=postgresql+psycopg://user:pass@host:5432/claudefleet
-   ```
-2. **Set a strong secret:** `CLAUDEFLEET_JWT_SECRET=<random 32+ chars>`.
-3. **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   (working directory = `server/`; the app creates tables + seeds roles on boot).
-4. Note the public URL, e.g. `https://claudefleet-api.onrender.com`.
+**Settings → API**
+- `SUPABASE_URL` — the project URL
+- `SUPABASE_ANON_KEY` — publishable key
+- `SUPABASE_SERVICE_ROLE_KEY` — secret key (server-only, never sent to browsers)
 
-*(Example — Render: New Web Service → root `server/` → Build `pip install -e .` →
-Start `uvicorn app.main:app --host 0.0.0.0 --port $PORT` → add the two env vars.)*
+**Connect → Transaction pooler** (port **6543**)
+- `DATABASE_URL`
+
+> **Use the pooler, not `db.<ref>.supabase.co`.** Newer Supabase projects publish
+> no DNS at all for direct connections. Even where they do, each serverless
+> invocation opens its own backend connection and exhausts the limit. The
+> transaction pooler multiplexes them.
+
+**Connect → Session pooler** (port **5432**)
+- `DIRECT_URL` — used only for migrations, which need a stable session for DDL.
+
+### Email settings
+
+Admins invite users by email. If your project has no SMTP configured, either set
+one up under **Authentication → Emails**, or create accounts with an explicit
+password (the "Set a password instead" option on the invite form).
 
 ---
 
-## 2. Deploy the frontend to Netlify
+## 2. Apply migrations
 
-The repo already includes [`netlify.toml`](../netlify.toml).
+Run once from your machine, against the production database:
+
+```bash
+cd api
+DIRECT_URL="postgresql://...:5432/postgres" npm run db:migrate
+```
+
+This creates the ten tables, indexes, and seeds the four roles. It is idempotent
+— re-running applies only new migrations.
+
+---
+
+## 3. Deploy to Netlify
 
 1. Push the repo to GitHub/GitLab.
-2. In Netlify: **Add new site → Import from Git**, pick the repo.
-3. Build settings are read from `netlify.toml` automatically:
-   - Base directory `web`, build `npm run build`, publish `web/dist`.
-4. **Edit `netlify.toml`** — replace `YOUR-BACKEND-HOST` in the `/api/*` redirect
-   with your backend URL from step 1, commit, and let Netlify redeploy.
-5. Deploy. Your dashboard is live at `https://<your-site>.netlify.app`.
+2. Netlify → **Add new site → Import from Git**.
+3. Build settings come from [`netlify.toml`](../netlify.toml) automatically:
+   - build `npm run build`, publish `web/dist`, functions in `netlify/functions`
+4. **Site configuration → Environment variables** — add:
 
-The `/api/*` proxy means the browser only ever calls the Netlify origin, so **no
-CORS setup is needed**. (If you instead call the backend cross-origin directly,
-add the Netlify URL to `CLAUDEFLEET_CORS_ORIGINS` on the backend.)
+   ```
+   DATABASE_URL                 (transaction pooler, port 6543)
+   SUPABASE_URL
+   SUPABASE_ANON_KEY
+   SUPABASE_SERVICE_ROLE_KEY
+   NODE_ENV=production
+   ```
 
-The SPA fallback redirect in `netlify.toml` makes `/login`, `/register`,
-`/dashboard`, etc. survive a hard refresh.
+   The dashboard also needs its build-time pair:
+
+   ```
+   VITE_SUPABASE_URL
+   VITE_SUPABASE_ANON_KEY
+   ```
+
+5. Deploy.
+
+`PUBLIC_URL` is optional — Netlify sets `URL` automatically, and the generated
+install scripts use it so agents point at the right origin.
+
+### Verify
+
+```bash
+curl https://your-site.netlify.app/api/v1/health
+# {"status":"ok","service":"claudefleet","version":"1.0.0","database":"ok"}
+```
+
+A `database` value other than `ok` means `DATABASE_URL` is wrong or the pooler is
+unreachable.
 
 ---
 
-## 3. First run
+## 4. First run
 
-1. Open the Netlify URL → `/register` → create the admin account.
-2. Sign in → name your first machine → copy its API key.
-3. On each PC: open **Connect PC** in the dashboard (or run `deploy/install.ps1`):
-
-```powershell
-pip install claudefleet-agent
-claudefleet register --server https://YOUR-NETLIFY-SITE --api-key cfk_... --display-name PC-01
-claudefleet scan && claudefleet sync
-```
-
-Or one command on Windows:
-
-```powershell
-irm https://YOUR-NETLIFY-SITE/install.ps1 | iex -Args "-Server https://YOUR-NETLIFY-SITE -ApiKey cfk_... -Name PC-01"
-```
-
-Host `deploy/install.ps1` on your static site or CDN so users can fetch it.
+1. Open the site → **Create the admin account**. The first user to sign up
+   becomes administrator; registration then closes automatically.
+2. **Connect a PC** → copy the one-line command → run it in PowerShell on the
+   machine you want to track.
+3. Usage appears on the dashboard after the first sync (within ~15 minutes, or
+   immediately since the install script runs a scan itself).
 
 ---
 
-## Alternative: one host for everything
+## 5. Roll out to more PCs
 
-If you'd rather not split hosting, serve the built frontend from FastAPI and
-deploy the whole thing to a single Python host (no Netlify): run
-`npm run build` and have FastAPI serve `web/dist` as static files, or put both
-behind a reverse proxy (nginx/Caddy) on a VM. Netlify is only worth it when you
-want the frontend on a fast CDN separate from the API.
+Each user signs in and uses **Connect a PC** themselves — this works for every
+role, including developers, so onboarding does not require an admin.
+
+Administrators can alternatively pre-create machines and share keys from
+**Admin → Agent API keys**.
+
+Each install schedules a Windows task (`ClaudeFleet Scan+Sync`) that runs every
+15 minutes. To remove it:
+
+```powershell
+schtasks /Delete /TN "ClaudeFleet Scan+Sync" /F
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `health` reports `database: error` | `DATABASE_URL` wrong, or using the direct host instead of the pooler. |
+| `Tenant or user not found` | Wrong pooler region. Copy the exact URI from **Connect**. |
+| Function times out on first request | Cold start plus a slow first connection. The configured timeout is 26s; retry. |
+| Invite emails never arrive | No SMTP configured in Supabase. Use the "set a password" option, or configure SMTP. |
+| `unrecognized JWT kid` on user creation | Transient GoTrue error, retried automatically. Persisting means email confirmation is failing — check Supabase auth settings. |
+| Dashboard shows zeros | No agent has synced yet. Check **Systems** for "Never synced". |
+| Agent `scan` finds 0 events | No Claude Code transcripts on that PC — confirm `%USERPROFILE%\.claude\projects\` exists. |
+
+---
+
+## Alternative hosts
+
+Nothing is Netlify-specific except [`netlify.toml`](../netlify.toml) and
+[`netlify/functions/api.mts`](../netlify/functions/api.mts). To run the API as a
+normal long-lived process instead:
+
+```bash
+cd api && npm run build && node dist/server.js
+```
+
+Serve `web/dist` from any static host and proxy `/api/*` to it. On a persistent
+host you can use the **session** pooler (port 5432) for the runtime connection
+too, and raise `max` in [`api/src/db/client.ts`](../api/src/db/client.ts).

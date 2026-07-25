@@ -14,12 +14,18 @@ claudefleet.db
 
 # Node / frontend
 node_modules/
-# web/dist/
+web/dist/
+api/dist/
+*.tsbuildinfo
 *.local
+
+# Netlify
+.netlify/
 
 # Env / secrets
 .env
 .env.*
+!.env.example
 
 # OS / editor
 .DS_Store

@@ -1,150 +1,263 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+/**
+ * Agent API keys.
+ *
+ * Key management only — enrolling a machine now lives entirely on /connect,
+ * which removes the third duplicate system-creation form.
+ *
+ * Rotate and revoke previously had no error handling at all, so a failure was
+ * completely invisible; both now report through toasts and confirm first.
+ */
+
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
 import { api } from "../api/client";
-import type { ApiKeyRow, SystemRow } from "../api/types";
-import { Button, Card, CardHead, EmptyState, Spinner } from "../components/ui";
+import { qk } from "../api/queryKeys";
+import type { ApiKeyCreated, ApiKeyRow, SystemRow } from "../api/types";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardHead,
+  CodeBlock,
+  ConfirmDialog,
+  EmptyState,
+  ErrorState,
+  Eyebrow,
+  Field,
+  Input,
+  LoadingState,
+  Select,
+  Table,
+  Td,
+  Th,
+  useToast,
+} from "../components/ui";
 import { fmtRelative } from "../lib/format";
-import { stashConnectInfo } from "../lib/agentSetup";
-
-// A freshly-minted key is shown exactly once — the server only stores its hash.
-function KeyReveal({ value, displayName, onClose }: { value: string; displayName?: string; onClose: () => void }) {
-  const navigate = useNavigate();
-
-  function goConnect() {
-    stashConnectInfo(value, displayName);
-    navigate("/connect");
-  }
-
-  return (
-    <div className="mb-4 rounded-xl border p-4" style={{ background: "var(--accent-weak)", borderColor: "var(--accent)" }}>
-      <div className="mb-1 text-[12.5px] font-semibold" style={{ color: "var(--accent)" }}>
-        Copy this API key now — it won't be shown again.
-      </div>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 overflow-x-auto rounded-lg px-3 py-2 text-[12.5px]"
-          style={{ background: "var(--surface)", color: "var(--ink)" }}>{value}</code>
-        <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(value)}>Copy</Button>
-        <Button onClick={goConnect}>Setup instructions →</Button>
-        <Button variant="ghost" onClick={onClose}>Done</Button>
-      </div>
-    </div>
-  );
-}
 
 export function AdminKeys() {
   const qc = useQueryClient();
-  const systems = useQuery({ queryKey: ["systems"], queryFn: () => api.get<SystemRow[]>("/api/v1/systems") });
-  const [selected, setSelected] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-  const [revealed, setRevealed] = useState<string | null>(null);
-  const [revealedFor, setRevealedFor] = useState<string | null>(null);
+  const toast = useToast();
 
-  const sysId = selected ?? systems.data?.[0]?.system_id ?? null;
-  const keys = useQuery({
-    queryKey: ["keys", sysId],
-    queryFn: () => api.get<ApiKeyRow[]>(`/api/v1/admin/systems/${sysId}/keys`),
-    enabled: !!sysId,
+  const [systemId, setSystemId] = useState<string>("");
+  const [keyName, setKeyName] = useState("");
+  const [revealed, setRevealed] = useState<{ key: string; label: string } | null>(null);
+  const [pendingRevoke, setPendingRevoke] = useState<ApiKeyRow | null>(null);
+
+  useEffect(() => {
+    document.title = "Agent API keys — ClaudeFleet";
+  }, []);
+
+  const systems = useQuery({
+    queryKey: qk.systems,
+    queryFn: () => api.get<SystemRow[]>("/systems"),
   });
 
-  const addSystem = useMutation({
-    mutationFn: () => api.post<{ api_key: string; system: SystemRow }>("/api/v1/admin/systems", { display_name: newName }),
-    onSuccess: (r) => {
-      setRevealed(r.api_key);
-      setRevealedFor(r.system.display_name);
-      stashConnectInfo(r.api_key, r.system.display_name);
-      setNewName("");
-      qc.invalidateQueries({ queryKey: ["systems"] });
+  // Default to the first system once loaded.
+  const activeId = systemId || systems.data?.[0]?.system_id || "";
+
+  const keys = useQuery({
+    queryKey: qk.keys(activeId || null),
+    queryFn: () => api.get<ApiKeyRow[]>(`/admin/systems/${activeId}/keys`),
+    enabled: Boolean(activeId),
+  });
+
+  const invalidateKeys = () => qc.invalidateQueries({ queryKey: qk.keys(activeId) });
+
+  const addKey = useMutation({
+    mutationFn: () =>
+      api.post<ApiKeyCreated>(`/admin/systems/${activeId}/keys`, {
+        name: keyName.trim() || "key",
+      }),
+    onSuccess: (data) => {
+      invalidateKeys();
+      setRevealed({ key: data.api_key, label: "New key created" });
+      setKeyName("");
+    },
+    onError: (e: Error) => toast.push(e.message, "error"),
+  });
+
+  const rotate = useMutation({
+    mutationFn: (keyId: number) => api.post<ApiKeyCreated>(`/admin/keys/${keyId}/rotate`),
+    onSuccess: (data) => {
+      invalidateKeys();
+      setRevealed({ key: data.api_key, label: "Key rotated — the old one no longer works" });
+    },
+    onError: (e: Error) => toast.push(e.message, "error"),
+  });
+
+  const revoke = useMutation({
+    mutationFn: (keyId: number) => api.del(`/admin/keys/${keyId}`),
+    onSuccess: () => {
+      invalidateKeys();
+      toast.push("Key revoked.");
+      setPendingRevoke(null);
+    },
+    onError: (e: Error) => {
+      toast.push(e.message, "error");
+      setPendingRevoke(null);
     },
   });
-  const addKey = useMutation({
-    mutationFn: () => api.post<{ api_key: string }>(`/api/v1/admin/systems/${sysId}/keys`, { name: "key" }),
-    onSuccess: (r) => { setRevealed(r.api_key); qc.invalidateQueries({ queryKey: ["keys", sysId] }); },
-  });
-  const rotate = useMutation({
-    mutationFn: (id: number) => api.post<{ api_key: string }>(`/api/v1/admin/keys/${id}/rotate`),
-    onSuccess: (r) => { setRevealed(r.api_key); qc.invalidateQueries({ queryKey: ["keys", sysId] }); },
-  });
-  const revoke = useMutation({
-    mutationFn: (id: number) => api.del(`/api/v1/admin/keys/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["keys", sysId] }),
-  });
-
-  const input = "rounded-lg border px-3 py-2 text-[13px] outline-none";
-  const inputStyle = { background: "var(--surface-2)", borderColor: "var(--border)", color: "var(--ink)" };
 
   return (
-    <div>
-      <h2 className="mb-1 text-[21px] font-semibold tracking-tight">Agent API keys</h2>
-      <p className="mb-5 text-[13.5px]" style={{ color: "var(--ink-2)" }}>
-        Each PC authenticates with its own key. Keys are hashed at rest and revealed once.
-      </p>
+    <div className="flex flex-col gap-5">
+      <div>
+        <Eyebrow>Admin</Eyebrow>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Agent API keys</h1>
+        <p className="mt-1.5 max-w-2xl text-base text-muted">
+          Each PC authenticates with its own key. Keys are stored hashed, so a key is only
+          ever shown once — rotate it if it is lost.
+        </p>
+      </div>
 
       {revealed && (
-        <KeyReveal
-          value={revealed}
-          displayName={revealedFor ?? undefined}
-          onClose={() => { setRevealed(null); setRevealedFor(null); }}
-        />
+        <Card>
+          <CardHead
+            title={revealed.label}
+            right={
+              <Button variant="subtle" size="sm" onClick={() => setRevealed(null)}>
+                Done
+              </Button>
+            }
+          />
+          <Alert tone="warn" title="Copy this now">
+            This is the only time the full key is shown.
+          </Alert>
+          <div className="mt-3">
+            <CodeBlock code={revealed.key} />
+          </div>
+        </Card>
       )}
 
-      <p className="mb-4 text-[13px]" style={{ color: "var(--ink-2)" }}>
-        After creating a key, open <Link to="/connect" style={{ color: "var(--accent)" }}>Connect PC</Link>{" "}
-        for copy-paste install commands to send to each user.
-      </p>
+      {systems.isLoading ? (
+        <Card>
+          <LoadingState />
+        </Card>
+      ) : systems.isError ? (
+        <Card>
+          <ErrorState error={systems.error} onRetry={() => systems.refetch()} />
+        </Card>
+      ) : systems.data!.length === 0 ? (
+        <Card>
+          <EmptyState
+            title="No PCs connected yet"
+            hint="Connect a machine first — it gets its key automatically."
+            action={
+              <Link to="/connect">
+                <Button size="sm">Connect a PC</Button>
+              </Link>
+            }
+          />
+        </Card>
+      ) : (
+        <Card>
+          <CardHead title="Keys" />
 
-      <Card className="mb-4">
-        <CardHead title="Enroll a new system" />
-        <div className="flex flex-wrap items-center gap-2">
-          <input className={input} style={inputStyle} placeholder="Display name, e.g. PC-04" value={newName}
-            onChange={(e) => setNewName(e.target.value)} />
-          <Button onClick={() => addSystem.mutate()} disabled={!newName || addSystem.isPending}>Create system + key</Button>
-        </div>
-      </Card>
+          <div className="mb-4 grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+            <Field label="PC">
+              {(p) => (
+                <Select
+                  {...p}
+                  value={activeId}
+                  onChange={(e) => setSystemId(e.target.value)}
+                >
+                  {systems.data!.map((s) => (
+                    <option key={s.system_id} value={s.system_id}>
+                      {s.display_name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
 
-      <Card>
-        <CardHead title="Keys" right={
-          <select className={input} style={inputStyle} value={sysId ?? ""} onChange={(e) => setSelected(e.target.value)}>
-            {(systems.data ?? []).map((s) => <option key={s.system_id} value={s.system_id}>{s.display_name}</option>)}
-          </select>
-        } />
-        {!sysId ? <EmptyState title="No systems yet" hint="Enroll a system above to mint its first key." />
-          : keys.isLoading ? <Spinner /> : (
-          <>
-            <div className="mb-3"><Button variant="ghost" onClick={() => addKey.mutate()} disabled={addKey.isPending}>+ New key for this system</Button></div>
-            {(keys.data?.length ?? 0) === 0 ? <EmptyState title="No keys" /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="text-left text-[10.5px] uppercase tracking-[0.06em]" style={{ color: "var(--muted)" }}>
-                      {["Prefix", "Name", "Created", "Last used", "Status", ""].map((h) => <th key={h} className="px-3 pb-2.5 font-semibold">{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(keys.data ?? []).map((k) => (
-                      <tr key={k.id} className="text-[13px]" style={{ borderTop: "1px solid var(--border)" }}>
-                        <td className="tnum px-3 py-3 font-medium">{k.prefix}…</td>
-                        <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{k.name}</td>
-                        <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{fmtRelative(k.created_at)}</td>
-                        <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{fmtRelative(k.last_used_at)}</td>
-                        <td className="px-3 py-3" style={{ color: k.active ? "var(--good)" : "var(--muted)" }}>{k.active ? "Active" : "Revoked"}</td>
-                        <td className="px-3 py-3">
-                          {k.active && (
-                            <div className="flex gap-2">
-                              <button className="text-[12px] font-semibold" style={{ color: "var(--accent)" }} onClick={() => rotate.mutate(k.id)}>Rotate</button>
-                              <button className="text-[12px] font-semibold" style={{ color: "var(--critical)" }} onClick={() => revoke.mutate(k.id)}>Revoke</button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
+            <Field label="New key name" hint="For your own reference.">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={keyName}
+                  onChange={(e) => setKeyName(e.target.value)}
+                  placeholder="e.g. laptop-backup"
+                />
+              )}
+            </Field>
+
+            <Button onClick={() => addKey.mutate()} loading={addKey.isPending}>
+              Create key
+            </Button>
+          </div>
+
+          {keys.isLoading ? (
+            <LoadingState />
+          ) : keys.isError ? (
+            <ErrorState error={keys.error} onRetry={() => keys.refetch()} />
+          ) : (keys.data?.length ?? 0) === 0 ? (
+            <EmptyState title="No keys for this PC" />
+          ) : (
+            <Table caption="API keys for the selected PC">
+              <thead>
+                <tr>
+                  <Th>Name</Th>
+                  <Th>Prefix</Th>
+                  <Th>Created</Th>
+                  <Th>Last used</Th>
+                  <Th>Status</Th>
+                  <Th align="right">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.data!.map((k) => (
+                  <tr key={k.id}>
+                    <Td className="font-medium">{k.name || "—"}</Td>
+                    <Td className="tnum text-ink-2">{k.prefix}…</Td>
+                    <Td className="text-ink-2">{fmtRelative(k.created_at)}</Td>
+                    <Td className="text-ink-2">{fmtRelative(k.last_used_at)}</Td>
+                    <Td>
+                      {k.active ? (
+                        <Badge tone="good">Active</Badge>
+                      ) : (
+                        <Badge tone="critical">Revoked</Badge>
+                      )}
+                    </Td>
+                    <Td align="right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={!k.active || rotate.isPending}
+                          onClick={() => rotate.mutate(k.id)}
+                        >
+                          Rotate
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="subtle"
+                          disabled={!k.active}
+                          onClick={() => setPendingRevoke(k)}
+                        >
+                          Revoke
+                        </Button>
+                      </div>
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </Card>
+      )}
+
+      <ConfirmDialog
+        open={pendingRevoke !== null}
+        title="Revoke this key?"
+        body="The PC using it will stop syncing immediately until it is given a new key."
+        confirmLabel="Revoke key"
+        destructive
+        busy={revoke.isPending}
+        onConfirm={() => pendingRevoke && revoke.mutate(pendingRevoke.id)}
+        onCancel={() => setPendingRevoke(null)}
+      />
     </div>
   );
 }

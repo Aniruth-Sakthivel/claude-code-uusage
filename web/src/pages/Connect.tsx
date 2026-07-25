@@ -1,184 +1,101 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "../auth/AuthContext";
-import { api } from "../api/client";
-import type { SystemCreated, SystemRow } from "../api/types";
-import { ConnectInstructions } from "../components/ConnectInstructions";
-import { Button, Card, CardHead, EmptyState, Spinner } from "../components/ui";
-import { clearStashedConnect, readStashedConnect, stashConnectInfo } from "../lib/agentSetup";
+/**
+ * Connect a PC — the single place machines are added.
+ *
+ * Replaces three divergent implementations (this page, the Login setup card,
+ * and the Admin Keys enroll card). Available to every role, since
+ * `/connect/self` is not admin-gated; a developer who cannot administer
+ * anything can still connect their own machine.
+ */
 
-const ENVIRONMENTS = ["", "dev", "build", "lab", "prod", "other"];
-const field = "w-full rounded-lg border px-3 py-2.5 text-[14px] outline-none";
-const fieldStyle = { background: "var(--surface-2)", borderColor: "var(--border)", color: "var(--ink)" };
+import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
+import type { SystemRow } from "../api/types";
+import { ConnectPanel } from "../components/ConnectPanel";
+import {
+  Card,
+  CardHead,
+  ErrorState,
+  Eyebrow,
+  LoadingState,
+  StatusPill,
+  Table,
+  Td,
+  Th,
+} from "../components/ui";
+import { fmtRelative, fmtTokens } from "../lib/format";
 
 export function Connect() {
-  const { user, can } = useAuth();
-  const qc = useQueryClient();
-  const canManageKeys = can("manage_keys");
-
   const systems = useQuery({
-    queryKey: ["systems"],
-    queryFn: () => api.get<SystemRow[]>("/api/v1/systems"),
+    queryKey: qk.systems,
+    queryFn: () => api.get<SystemRow[]>("/systems"),
   });
-
-  const assigned = (systems.data ?? []).filter(
-    (s) => user?.role !== "developer" || (user.system_ids ?? []).includes(s.system_id),
-  );
-
-  const [displayName, setDisplayName] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [createForm, setCreateForm] = useState({
-    display_name: "", owner: "", location: "", environment: "", notes: "",
-  });
-  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
-    const stashed = readStashedConnect();
-    if (stashed.apiKey) setApiKey(stashed.apiKey);
-    if (stashed.displayName) {
-      setDisplayName(stashed.displayName);
-      setCreateForm((f) => ({ ...f, display_name: stashed.displayName! }));
-    } else if (assigned.length === 1) {
-      setDisplayName(assigned[0].display_name);
-    }
-  }, [systems.data]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const createSystem = useMutation({
-    mutationFn: () => api.post<SystemCreated>("/api/v1/admin/systems", createForm),
-    onSuccess: (res) => {
-      setApiKey(res.api_key);
-      setDisplayName(res.system.display_name);
-      stashConnectInfo(res.api_key, res.system.display_name);
-      qc.invalidateQueries({ queryKey: ["systems"] });
-      setCreateError(null);
-    },
-    onError: (e: Error) => setCreateError(e.message),
-  });
-
-  function onSystemPick(id: string) {
-    const sys = assigned.find((s) => s.system_id === id);
-    if (sys) setDisplayName(sys.display_name);
-  }
+    document.title = "Connect a PC — ClaudeFleet";
+  }, []);
 
   return (
-    <div>
-      <h2 className="mb-1 text-[21px] font-semibold tracking-tight">Connect this PC</h2>
-      <p className="mb-5 text-[13.5px]" style={{ color: "var(--ink-2)" }}>
-        Install the ClaudeFleet agent on each machine where Claude Code runs. You only need this
-        dashboard URL — no full project download required.
-      </p>
-
-      <div className="mb-5 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHead title="Your settings" hint="Used in the commands below" />
-          <div className="flex flex-col gap-3">
-            {assigned.length > 1 && (
-              <label className="text-[12.5px] font-medium">Assigned system
-                <select className={field + " mt-1"} style={fieldStyle}
-                  value={assigned.find((s) => s.display_name === displayName)?.system_id ?? ""}
-                  onChange={(e) => onSystemPick(e.target.value)}>
-                  <option value="">— pick —</option>
-                  {assigned.map((s) => (
-                    <option key={s.system_id} value={s.system_id}>{s.display_name}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            <label className="text-[12.5px] font-medium">PC name (display name)
-              <input className={field + " mt-1"} style={fieldStyle} placeholder="e.g. PC-02"
-                value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-            </label>
-
-            <label className="text-[12.5px] font-medium">Agent API key
-              <input className={field + " mt-1 font-mono text-[13px]"} style={fieldStyle}
-                placeholder="cfk_… (from your admin)" value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)} />
-            </label>
-
-            {apiKey && (
-              <Button variant="ghost" onClick={() => { setApiKey(""); clearStashedConnect(); }}>
-                Clear key
-              </Button>
-            )}
-
-            {!canManageKeys && assigned.length === 0 && systems.isSuccess && (
-              <EmptyState
-                title="No systems assigned"
-                hint="Ask an administrator to create your account, assign a system, and give you an API key."
-              />
-            )}
-
-            {!canManageKeys && assigned.length > 0 && !apiKey && (
-              <p className="text-[12.5px]" style={{ color: "var(--ink-2)" }}>
-                Your admin enrolled{" "}
-                <b>{assigned.map((s) => s.display_name).join(", ")}</b>.
-                Paste the API key they sent you above.
-              </p>
-            )}
-          </div>
-        </Card>
-
-        {canManageKeys && (
-          <Card>
-            <CardHead title="Enroll a new PC" hint="Admin only" />
-            <p className="mb-3 text-[12.5px]" style={{ color: "var(--ink-2)" }}>
-              Create a system and API key for a new machine. The key is shown once — copy it
-              immediately.
-            </p>
-            <div className="flex flex-col gap-3">
-              <label className="text-[12.5px] font-medium">System name
-                <input className={field + " mt-1"} style={fieldStyle} placeholder="e.g. PC-03"
-                  value={createForm.display_name}
-                  onChange={(e) => setCreateForm({ ...createForm, display_name: e.target.value })} />
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="text-[12.5px] font-medium">Owner
-                  <input className={field + " mt-1"} style={fieldStyle} placeholder="Person"
-                    value={createForm.owner}
-                    onChange={(e) => setCreateForm({ ...createForm, owner: e.target.value })} />
-                </label>
-                <label className="text-[12.5px] font-medium">Location
-                  <input className={field + " mt-1"} style={fieldStyle} placeholder="Office"
-                    value={createForm.location}
-                    onChange={(e) => setCreateForm({ ...createForm, location: e.target.value })} />
-                </label>
-              </div>
-              <label className="text-[12.5px] font-medium">Environment
-                <select className={field + " mt-1"} style={fieldStyle} value={createForm.environment}
-                  onChange={(e) => setCreateForm({ ...createForm, environment: e.target.value })}>
-                  {ENVIRONMENTS.map((e) => (
-                    <option key={e} value={e}>{e === "" ? "— none —" : e}</option>
-                  ))}
-                </select>
-              </label>
-              {createError && (
-                <div className="text-[12.5px]" style={{ color: "var(--critical)" }}>{createError}</div>
-              )}
-              <Button
-                onClick={() => createSystem.mutate()}
-                disabled={!createForm.display_name.trim() || createSystem.isPending}>
-                {createSystem.isPending ? "Creating…" : "Create system + key"}
-              </Button>
-            </div>
-          </Card>
-        )}
+    <div className="flex flex-col gap-6">
+      <div>
+        <Eyebrow>Setup</Eyebrow>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Connect a PC</h1>
+        <p className="mt-1.5 max-w-2xl text-base text-muted">
+          Run one command on the machine you want to track. After that it scans and syncs
+          on its own every 15 minutes.
+        </p>
       </div>
 
+      <ConnectPanel systems={systems.data ?? []} />
+
       <Card>
-        <CardHead title="Run on this PC" hint="PowerShell or terminal" />
-        {systems.isLoading ? <Spinner /> : (
-          <ConnectInstructions apiKey={apiKey} displayName={displayName || "PC-01"} />
+        <CardHead
+          title="Your connected PCs"
+          hint={systems.data ? `${systems.data.length} total` : undefined}
+        />
+
+        {systems.isLoading ? (
+          <LoadingState />
+        ) : systems.isError ? (
+          <ErrorState error={systems.error} onRetry={() => systems.refetch()} />
+        ) : systems.data!.length === 0 ? (
+          <p className="py-6 text-center text-base text-muted">
+            No PCs yet — connect your first one above.
+          </p>
+        ) : (
+          <Table caption="Connected machines and their sync status">
+            <thead>
+              <tr>
+                <Th>PC</Th>
+                <Th>Status</Th>
+                <Th>Last sync</Th>
+                <Th align="right">Tokens</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {systems.data!.map((s) => (
+                <tr key={s.system_id}>
+                  <Td>
+                    <div className="font-medium">{s.display_name}</div>
+                    {s.hostname && <div className="text-xs text-muted">{s.hostname}</div>}
+                  </Td>
+                  <Td>
+                    <StatusPill status={s.status} neverSynced={s.never_synced} />
+                  </Td>
+                  <Td className="text-muted">
+                    {s.never_synced ? "Waiting for first sync" : fmtRelative(s.last_sync_at)}
+                  </Td>
+                  <Td align="right" className="tnum font-semibold">
+                    {fmtTokens(s.total_tokens)}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         )}
       </Card>
-
-      <p className="mt-4 text-[12px]" style={{ color: "var(--muted)" }}>
-        After running scan + sync, open{" "}
-        <Link to="/dashboard" style={{ color: "var(--accent)" }}>Overview</Link>{" "}
-        to see usage. Schedule scan every 15 minutes with Task Scheduler — see{" "}
-        <code className="text-[11px]">deploy/install.ps1</code> for an automated setup.
-      </p>
     </div>
   );
 }

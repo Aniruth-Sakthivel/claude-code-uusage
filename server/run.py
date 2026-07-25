@@ -33,8 +33,8 @@ def main() -> None:
     print(f"  Database:   {s.database_url}")
     print("  First run: open the web app and create your admin account")
     print("             (registration is open only until the first user exists).")
-    if s.jwt_secret == "dev-insecure-change-me":
-        print("  WARNING: using the default JWT secret — set CLAUDEFLEET_JWT_SECRET in production.")
+    if not s.supabase_url:
+        print("  WARNING: CLAUDEFLEET_SUPABASE_URL is not set — auth will not work.")
     print("=" * 64)
 
     uvicorn.run("app.main:app", host=host, port=port, reload=False)

@@ -1,122 +1,172 @@
 # ClaudeFleet
 
 > Centralized Claude Code usage monitoring across multiple PCs.
-> **Original software** — not derived from or dependent on any third-party project.
-> (*"ClaudeFleet" is a working name; rename freely.*)
 
 ClaudeFleet answers one question across a fleet of machines:
 
-> **Which PC is generating the most tracked Claude Code token activity?**
+> **Which PC is generating the most Claude Code token activity?**
 
-It reads Claude Code's local JSONL transcript files on each PC, stores a
-centralization-ready usage record in local SQLite, and (in central mode) syncs
-that metadata to a central API + dashboard.
+It reads the JSONL transcript files Claude Code already writes on each PC, stores
+usage locally in SQLite, and syncs the metadata to a central API + dashboard.
 
 > **Tracked activity ≠ official quota.** All numbers are token counts parsed from
 > local transcript files — an observability *estimate*, not a reading of
 > Anthropic's official Claude Max/Pro quota or billing.
 
-## Repository layout
+**Privacy:** only token counts and metadata ever leave a machine. Never prompts,
+responses, or source code. The agent never modifies Claude Code's files.
+
+---
+
+## Layout
 
 ```
-agent/     local agent — scanner, local SQLite store, sync client, CLI
-server/    central API (FastAPI + SQLAlchemy) — auth, RBAC, sync, dashboard endpoints
-web/       central dashboard (React + Vite + TypeScript + Tailwind)
-docs/      audit (format spec), centralization plan, run guide
+agent/    local agent (Python, standard library only) — scanner, store, sync, CLI
+api/      central API (Node + Fastify + Drizzle on Supabase Postgres)
+web/      dashboard (React + Vite + TypeScript + Tailwind v4)
+netlify/  serverless function entry — the API runs here in production
+docs/     format reference, deployment, run guide
 ```
 
-## Run the project
+The API and dashboard deploy together to **Netlify as a single site**: the
+dashboard is static, the API is a serverless function on the same origin. No
+separate backend host, and no CORS to configure.
 
-Three parts: the **server** (central API), the **web** dashboard, and the
-**agent** on each PC. For a single machine you only need the agent; for the
-central dashboard, run all three. Prerequisites: **Python 3.10+** and **Node 18+**.
+---
 
-### 1 — Start the central server (run once)
+## Quick start
+
+Prerequisites: **Node 20+**, **Python 3.10+**, and a **Supabase** project.
+
+### 1. Configure
 
 ```bash
-cd server
-python -m venv .venv && .venv\Scripts\activate    # Windows (use source .venv/bin/activate on macOS/Linux)
-pip install -e .
-python run.py                                      # serves http://127.0.0.1:8000
+cp api/.env.example api/.env
+cp web/.env.example web/.env
 ```
 
-First run auto-creates the SQLite database and seeds roles.
+Fill in from your Supabase dashboard:
 
-There are no built-in admin credentials. On first startup, create the first
-admin account from the web app on `/register`. If an admin user already exists,
-registration is closed and you must sign in with the existing admin email and
-password.
+| Variable | Where to find it |
+|---|---|
+| `DATABASE_URL` | **Connect → Transaction pooler** (port **6543**) |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | **Settings → API** |
+| `DIRECT_URL` | **Connect → Session pooler** (port **5432**) — migrations only |
 
-Set a real JWT secret in production:
-`set CLAUDEFLEET_JWT_SECRET=<random-32+ chars>` (PowerShell:
-`$env:CLAUDEFLEET_JWT_SECRET="..."`). API docs live at
-`http://127.0.0.1:8000/docs`.
+> Use the **pooler**, not `db.<ref>.supabase.co`. Newer Supabase projects publish
+> no DNS for direct connections, and serverless functions exhaust them anyway.
 
-### 2 — Start the web dashboard
+### 2. Install and migrate
 
 ```bash
-cd web
-npm install
-npm run dev                                        # opens http://localhost:5173
+npm install          # installs api/ and web/ (npm workspaces)
+npm run db:migrate   # creates the schema and seeds roles
+```
+
+### 3. Run
+
+```bash
+npm run dev          # API on :8000, dashboard on :5173
 ```
 
 Open **http://localhost:5173**:
-1. **Create the admin account** on `/register` (available only until the first user exists).
-2. Sign in → name your first machine on the **Set up this machine** panel → copy its **API key** (shown once).
-3. Add more people under **Admin → Users & roles** (role + assigned systems). They sign in at `/login`; RBAC scopes what they see (developers → only their assigned systems).
 
-### 3 — Run the agent on each PC
+1. **Create the admin account** — the first user to sign up becomes administrator.
+   Registration closes automatically afterwards.
+2. **Connect this PC** — copy the single generated command, run it in PowerShell.
+   It installs the agent, registers the machine, scans, syncs, and schedules
+   scan + sync every 15 minutes.
+3. Usage appears on the dashboard after the first sync.
+
+### 4. Add teammates
+
+**Admin → Users & roles** → invite by email. They set their own password from the
+invite link.
+
+| Role | Sees | Can manage |
+|---|---|---|
+| Administrator | all PCs | users, keys, systems, audit |
+| Manager | all PCs | — |
+| Developer | **only assigned PCs** | — |
+| Viewer | all PCs | — |
+
+Scoping is enforced in the data layer, so a developer cannot reach an unassigned
+machine even by hand-crafting a request.
+
+---
+
+## Connecting a PC
+
+The dashboard generates a one-line command:
+
+```powershell
+irm https://your-site.netlify.app/api/v1/connect/script/<token> | iex
+```
+
+The token is **single-use and expires in 15 minutes**, so the command is safe in
+shell history — the real API key is substituted server-side.
+
+Prefer to do it manually? The Connect page also shows the individual commands:
+
+```powershell
+pip install claudefleet-agent
+claudefleet register --server https://your-site --api-key cfk_... --display-name PC-01
+claudefleet scan
+claudefleet sync
+```
+
+> A browser cannot read `~/.claude/projects/*.jsonl` — sandboxing forbids it — so
+> no dashboard button can scan a PC directly. The install command is the
+> equivalent: one action, then it runs automatically.
+
+### Local-only mode
+
+The agent works with no server at all:
 
 ```bash
 cd agent
-python -m claudefleet register --server http://SERVER:8000 --api-key cfk_... --display-name PC-01
-python -m claudefleet scan        # ingest local transcripts
-python -m claudefleet sync        # push new usage to the server
-python -m claudefleet heartbeat   # liveness ping
+python -m claudefleet scan     # ingest transcripts
+python -m claudefleet today    # today's usage by model
+python -m claudefleet week     # last 7 days
+python -m claudefleet stats     # all-time
 ```
 
-Schedule `scan` + `sync` (e.g. every 15 min) and `heartbeat` (every 5 min) with
-Windows Task Scheduler — see [agent/README.md](agent/README.md).
+Local store: `~/.claude/claudefleet/usage.db` (override with `CLAUDEFLEET_DB`).
 
-> Full walkthrough with troubleshooting: [docs/RUNNING.md](docs/RUNNING.md).
+---
 
-## Agent — local mode (works today, no server required)
+## Design
 
-> 📘 **Full install & scan walkthrough:** [agent/README.md](agent/README.md)
+- **`event_id = "<system_id>:<message_id>"`** — globally unique, so re-scanning,
+  re-syncing, or retrying after a failure can never double-count. Ingest is a
+  single `INSERT … ON CONFLICT DO NOTHING`, which makes it atomic under
+  concurrent syncs.
+- **`usage_events` is the source of truth**; `daily_aggregates` is a rollup
+  updated in the same transaction, so dashboards stay fast without drifting.
+- **Two independent auth systems** — humans use Supabase JWTs (ES256, verified
+  against Supabase's public JWKS); agents use `cfk_` keys stored as sha256
+  hashes. Neither is accepted where the other belongs.
+- **UTC everywhere internally**; local time only for display.
+- **Offline-first agent** — sync failures leave local state untouched and retry
+  on the next run.
 
-
-```bash
-cd agent
-python -m claudefleet identity --display-name PC-01   # one-time machine label
-python -m claudefleet scan                            # ingest transcripts
-python -m claudefleet today                           # today's usage
-python -m claudefleet week                            # last 7 days
-python -m claudefleet stats                           # all-time
-```
-
-- Pure Python standard library in local mode (no dependencies).
-- Local store defaults to `~/.claude/claudefleet/usage.db` (override with `CLAUDEFLEET_DB`).
-- Machine identity in `~/.claude/claudefleet/agent.json` (override with `CLAUDEFLEET_CONFIG`).
-- **Idempotent & incremental:** re-running `scan` never double-counts (event ids are machine-namespaced and `INSERT OR IGNORE`d).
-
-## Design highlights
-
-- **`event_id = system_id : message_id`** (deterministic synthetic id when a
-  record has no message id) — globally unique across the fleet, so a usage event
-  can never be counted twice, even across re-scans or re-syncs.
-- **`usage_events` is the single source of truth**; day/model/session rollups are
-  SQL aggregations (no dual-write drift).
-- **UTC timestamps** stored internally; local time only for display.
-- **Privacy:** only metadata + token counts are ever stored/synced — never
-  prompts, responses, or source code.
+---
 
 ## Tests
 
 ```bash
-cd agent  && python -m pytest    # 33 tests — parser, store, scanner, pricing, identity
-cd server && python -m pytest    # 14 tests — auth, register, sync/dedup, dashboard, RBAC scoping
-cd web    && npm run build        # type-check + production build
+cd agent && python -m pytest             # 33 tests — parser, store, scanner, pricing
+cd api   && node tests/e2e-smoke.mjs     # 30 checks — auth, dedup, RBAC, keys
+cd api   && node tests/real-agent-flow.mjs  # full flow with the real agent
+cd web   && npm run build                # type-check + production build
 ```
 
-See [docs/CENTRALIZATION_PLAN.md](docs/CENTRALIZATION_PLAN.md) for the roadmap and
-[docs/UPSTREAM_AUDIT.md](docs/UPSTREAM_AUDIT.md) for the JSONL format reference.
+The API tests run against a live Supabase project and clean up after themselves.
+
+---
+
+## Deployment
+
+See [docs/DEPLOY.md](docs/DEPLOY.md). Short version: connect the repo to Netlify,
+set the four environment variables, deploy. One site serves both the dashboard
+and the API.

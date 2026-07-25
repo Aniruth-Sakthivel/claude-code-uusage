@@ -1,0 +1,24 @@
+{
+  "name": "claudefleet",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Centralized Claude Code usage monitoring across a fleet of PCs",
+  "type": "module",
+  "workspaces": [
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=api & npm run dev --workspace=web",
+    "dev:api": "npm run dev --workspace=api",
+    "dev:web": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=web",
+    "typecheck": "npm run typecheck --workspace=api && npm run typecheck --workspace=web",
+    "db:generate": "npm run db:generate --workspace=api",
+    "db:migrate": "npm run db:migrate --workspace=api",
+    "test": "npm run test --workspace=api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,40 +1,84 @@
+/**
+ * Audit log. Records who did what, and never contains secrets, prompts,
+ * responses, or source code.
+ */
+
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { AuditRow } from "../api/types";
-import { Card, CardHead, EmptyState, Spinner } from "../components/ui";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  ErrorState,
+  Eyebrow,
+  LoadingState,
+  Table,
+  Td,
+  Th,
+} from "../components/ui";
 import { fmtRelative } from "../lib/format";
 
+/** Destructive or security-relevant actions stand out. */
+function toneFor(action: string): "neutral" | "accent" | "critical" {
+  if (/revoked|deleted/.test(action)) return "critical";
+  if (/created|invited|rotated|connected/.test(action)) return "accent";
+  return "neutral";
+}
+
 export function AdminAudit() {
-  const q = useQuery({ queryKey: ["audit"], queryFn: () => api.get<AuditRow[]>("/api/v1/admin/audit") });
+  const q = useQuery({ queryKey: qk.audit, queryFn: () => api.get<AuditRow[]>("/admin/audit") });
+
+  useEffect(() => {
+    document.title = "Audit log — ClaudeFleet";
+  }, []);
+
   return (
-    <div>
-      <h2 className="mb-1 text-[21px] font-semibold tracking-tight">Audit log</h2>
-      <p className="mb-5 text-[13.5px]" style={{ color: "var(--ink-2)" }}>
-        Security-relevant actions. Never records secrets, prompts, responses, or source.
-      </p>
+    <div className="flex flex-col gap-5">
+      <div>
+        <Eyebrow>Admin</Eyebrow>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Audit log</h1>
+        <p className="mt-1.5 text-base text-muted">
+          Account, system, and key activity. Never contains secrets or conversation
+          content.
+        </p>
+      </div>
+
       <Card>
-        <CardHead title="Recent activity" hint={`${q.data?.length ?? 0} entries`} />
-        {q.isLoading ? <Spinner /> : (q.data?.length ?? 0) === 0 ? <EmptyState title="No audit entries" /> : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="text-left text-[10.5px] uppercase tracking-[0.06em]" style={{ color: "var(--muted)" }}>
-                  {["When", "Actor", "Action", "Target", "Detail"].map((h) => <th key={h} className="px-3 pb-2.5 font-semibold">{h}</th>)}
+        {q.isLoading ? (
+          <LoadingState />
+        ) : q.isError ? (
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        ) : q.data!.length === 0 ? (
+          <EmptyState title="No activity recorded yet" />
+        ) : (
+          <Table caption="Recent administrative activity">
+            <thead>
+              <tr>
+                <Th>When</Th>
+                <Th>Action</Th>
+                <Th>Actor</Th>
+                <Th>Target</Th>
+                <Th>Detail</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {q.data!.map((a) => (
+                <tr key={a.id}>
+                  <Td className="whitespace-nowrap text-ink-2">{fmtRelative(a.at)}</Td>
+                  <Td>
+                    <Badge tone={toneFor(a.action)}>{a.action}</Badge>
+                  </Td>
+                  <Td className="text-ink-2">{a.actor_email}</Td>
+                  <Td className="text-ink-2">{a.target || "—"}</Td>
+                  <Td className="text-muted">{a.detail || "—"}</Td>
                 </tr>
-              </thead>
-              <tbody>
-                {(q.data ?? []).map((a) => (
-                  <tr key={a.id} className="text-[13px]" style={{ borderTop: "1px solid var(--border)" }}>
-                    <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{fmtRelative(a.at)}</td>
-                    <td className="px-3 py-3">{a.actor_email}</td>
-                    <td className="px-3 py-3"><code className="text-[12px]">{a.action}</code></td>
-                    <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{a.target || "—"}</td>
-                    <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{a.detail || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </Table>
         )}
       </Card>
     </div>

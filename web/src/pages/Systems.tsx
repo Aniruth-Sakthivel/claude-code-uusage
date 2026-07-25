@@ -1,59 +1,101 @@
+/** Systems list — every connected PC with its status and totals. */
+
+import { useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+
 import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
 import type { SystemRow } from "../api/types";
-import { Card, CardHead, EmptyState, Spinner, StatusPill } from "../components/ui";
-import { fmtTokens, fmtRelative, systemColor } from "../lib/format";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Eyebrow,
+  LoadingState,
+  StatusPill,
+  Table,
+  Td,
+  Th,
+} from "../components/ui";
+import { fmtRelative, fmtTokens } from "../lib/format";
 
 export function Systems() {
-  const q = useQuery({ queryKey: ["systems"], queryFn: () => api.get<SystemRow[]>("/api/v1/systems") });
+  const q = useQuery({
+    queryKey: qk.systems,
+    queryFn: () => api.get<SystemRow[]>("/systems"),
+    refetchInterval: 60_000,
+  });
+
+  useEffect(() => {
+    document.title = "Systems — ClaudeFleet";
+  }, []);
 
   return (
-    <div>
-      <h2 className="mb-1 text-[21px] font-semibold tracking-tight">Systems</h2>
-      <p className="mb-5 text-[13.5px]" style={{ color: "var(--ink-2)" }}>Compare the machines in your fleet.</p>
+    <div className="flex flex-col gap-5">
+      <div>
+        <Eyebrow>Fleet</Eyebrow>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Systems</h1>
+        <p className="mt-1.5 text-base text-muted">
+          Every PC reporting usage, with its live status.
+        </p>
+      </div>
+
       <Card>
-        <CardHead title="Fleet" hint={`${q.data?.length ?? 0} systems`} />
-        {q.isLoading ? <Spinner /> : (q.data?.length ?? 0) === 0
-          ? <EmptyState title="No systems visible" hint="An admin can enroll systems and assign them to you." />
-          : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="text-left text-[10.5px] uppercase tracking-[0.06em]" style={{ color: "var(--muted)" }}>
-                    {["System", "Owner", "Location", "Status", "Last seen", "Tracked", "Sessions", "Projects"].map((h, i) => (
-                      <th key={h} className={`px-3 pb-2.5 font-semibold ${i >= 5 ? "text-right" : ""}`}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(q.data ?? []).map((sys, i) => (
-                    <tr key={sys.system_id} className="text-[13px]" style={{ borderTop: "1px solid var(--border)" }}>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-2.5">
-                          <span className="h-2.5 w-2.5 flex-none rounded-[3px]" style={{ background: systemColor(i) }} />
-                          <span>
-                            <span className="font-semibold">{sys.display_name}</span>
-                            {sys.environment && (
-                              <span className="ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-                                style={{ background: "var(--surface-2)", color: "var(--ink-2)" }}>{sys.environment}</span>
-                            )}
-                            <br /><span className="text-[11px]" style={{ color: "var(--muted)" }}>{sys.hostname || "—"}</span>
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{sys.owner || "—"}</td>
-                      <td className="px-3 py-3" style={{ color: "var(--ink-2)" }}>{sys.location || "—"}</td>
-                      <td className="px-3 py-3"><StatusPill status={sys.status} /></td>
-                      <td className="tnum px-3 py-3" style={{ color: "var(--ink-2)" }}>{fmtRelative(sys.last_seen_at)}</td>
-                      <td className="tnum px-3 py-3 text-right font-semibold">{fmtTokens(sys.total_tokens)}</td>
-                      <td className="tnum px-3 py-3 text-right" style={{ color: "var(--ink-2)" }}>{sys.sessions}</td>
-                      <td className="tnum px-3 py-3 text-right" style={{ color: "var(--ink-2)" }}>{sys.projects}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        {q.isLoading ? (
+          <LoadingState />
+        ) : q.isError ? (
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        ) : q.data!.length === 0 ? (
+          <EmptyState
+            title="No systems visible"
+            hint="Connect a PC, or ask an administrator to assign you one."
+            action={
+              <Link to="/connect">
+                <Button size="sm">Connect a PC</Button>
+              </Link>
+            }
+          />
+        ) : (
+          <Table caption="Systems with status, owner and tracked usage">
+            <thead>
+              <tr>
+                <Th>PC</Th>
+                <Th>Status</Th>
+                <Th>Owner</Th>
+                <Th>Environment</Th>
+                <Th>Last sync</Th>
+                <Th align="right">Tracked</Th>
+                <Th align="right">Projects</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {q.data!.map((s) => (
+                <tr key={s.system_id}>
+                  <Td>
+                    <div className="font-semibold">{s.display_name}</div>
+                    <div className="text-xs text-muted">{s.hostname || "—"}</div>
+                  </Td>
+                  <Td>
+                    <StatusPill status={s.status} neverSynced={s.never_synced} />
+                  </Td>
+                  <Td className="text-ink-2">{s.owner || "—"}</Td>
+                  <Td className="text-ink-2">{s.environment || "—"}</Td>
+                  <Td className="tnum text-ink-2">
+                    {s.never_synced ? "never" : fmtRelative(s.last_sync_at)}
+                  </Td>
+                  <Td align="right" className="tnum font-semibold">
+                    {fmtTokens(s.total_tokens)}
+                  </Td>
+                  <Td align="right" className="tnum text-ink-2">
+                    {s.projects}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
       </Card>
     </div>
   );

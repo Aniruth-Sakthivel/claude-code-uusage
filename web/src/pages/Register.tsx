@@ -1,100 +1,182 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
-import { api } from "../api/client";
-import { Button } from "../components/ui";
+/**
+ * First-run admin account creation.
+ *
+ * Only reachable while zero users exist. After that, accounts are created by an
+ * administrator, and this page says so plainly instead of failing with an
+ * opaque "no account for this login" error the way the old flow did.
+ */
 
-const field = "w-full rounded-lg border px-3 py-2.5 text-[14px] outline-none";
-const fieldStyle = { background: "var(--surface-2)", borderColor: "var(--border)", color: "var(--ink)" };
+import { useEffect, useState } from "react";
+import { Link, Navigate, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+
+import { api } from "../api/client";
+import { qk } from "../api/queryKeys";
+import type { RegistrationStatus } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
+import { Brand } from "../components/Layout";
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  FormCard,
+  Input,
+  LoadingState,
+} from "../components/ui";
+import { ThemeToggle } from "../lib/theme";
 
 export function Register() {
-  const { register } = useAuth();
+  const { user, loading, signUp } = useAuth();
   const navigate = useNavigate();
-  const [open, setOpen] = useState<boolean | null>(null);
-  const [form, setForm] = useState({ email: "", full_name: "", password: "", confirm: "" });
+
+  const [form, setForm] = useState({
+    email: "",
+    full_name: "",
+    password: "",
+    confirm: "",
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const registration = useQuery({
+    queryKey: qk.registrationOpen,
+    queryFn: () => api.get<RegistrationStatus>("/auth/registration-open"),
+  });
+
   useEffect(() => {
-    api.get<{ open: boolean }>("/api/v1/auth/registration-open")
-      .then((r) => setOpen(r.open))
-      .catch(() => setOpen(false));
+    document.title = "Create admin account — ClaudeFleet";
   }, []);
+
+  if (!loading && user) return <Navigate to="/dashboard" replace />;
+
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (form.password !== form.confirm) { setError("Passwords don't match."); return; }
-    if (form.password.length < 8) { setError("Password must be at least 8 characters."); return; }
-    setBusy(true); setError(null);
+    if (form.password !== form.confirm) {
+      setError("The two passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
     try {
-      await register(form.email, form.full_name, form.password);
-      navigate("/connect");
+      await signUp(form.email.trim(), form.full_name.trim(), form.password);
+      navigate("/welcome", { replace: true });
     } catch (err) {
-      setError((err as Error).message || "Registration failed.");
-    } finally { setBusy(false); }
+      setError(err instanceof Error ? err.message : "Could not create the account");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm({ ...form, [k]: e.target.value });
-
   return (
-    <div className="grid min-h-screen place-items-center px-4 py-10">
-      <div className="w-full max-w-[400px]">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-xl text-lg font-bold text-white"
-            style={{ background: "linear-gradient(135deg, var(--pc1), var(--accent))" }}>CF</div>
-          <div>
-            <div className="text-lg font-semibold leading-tight">ClaudeFleet</div>
-            <div className="text-[12px]" style={{ color: "var(--muted)" }}>First-run setup</div>
-          </div>
+    <div className="relative grid min-h-screen place-items-center bg-plane p-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
+
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex justify-center">
+          <Brand />
         </div>
 
-        <div className="rounded-2xl border p-6" style={{ background: "var(--surface)", borderColor: "var(--border)", boxShadow: "var(--shadow)" }}>
-          {open === null ? (
-            <div className="py-6 text-center text-sm" style={{ color: "var(--muted)" }}>Checking…</div>
-          ) : !open ? (
-            <div>
-              <h1 className="mb-1 text-[17px] font-semibold">Registration is closed</h1>
-              <p className="text-[13px]" style={{ color: "var(--ink-2)" }}>
-                An administrator already exists. Ask an admin to create your account, then
-                sign in with the credentials they give you, then go to{" "}
-                <strong>Connect PC</strong> in the sidebar to install the agent on your machine.
-              </p>
-              <div className="mt-5"><Link to="/login"><Button>Go to sign in</Button></Link></div>
+        {registration.isLoading ? (
+          <Card>
+            <LoadingState />
+          </Card>
+        ) : registration.data?.open === false ? (
+          <Card className="text-center">
+            <h1 className="text-xl font-semibold tracking-tight">Registration is closed</h1>
+            <p className="mt-2 text-sm text-muted">
+              An administrator account already exists. Ask your administrator to invite
+              you — you will receive an email to set your password.
+            </p>
+            <div className="mt-5">
+              <Link to="/login">
+                <Button variant="ghost">Back to sign in</Button>
+              </Link>
             </div>
-          ) : (
-            <>
-              <h1 className="mb-1 text-[17px] font-semibold">Create the admin account</h1>
-              <p className="mb-5 text-[13px]" style={{ color: "var(--ink-2)" }}>
-                This is the first account, so it becomes the administrator. You can add more
-                users afterwards from the dashboard.
+          </Card>
+        ) : (
+          <FormCard className="flex flex-col gap-4" onSubmit={onSubmit}>
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight">
+                Create the admin account
+              </h1>
+              <p className="mt-1 text-sm text-muted">
+                This is the first account, so it becomes the administrator. Everyone else
+                is invited from here afterwards.
               </p>
-              <form onSubmit={onSubmit} className="flex flex-col gap-3">
-                <label className="text-[12.5px] font-medium">Full name
-                  <input className={field + " mt-1"} style={fieldStyle} value={form.full_name}
-                    onChange={set("full_name")} placeholder="Your name" autoFocus />
-                </label>
-                <label className="text-[12.5px] font-medium">Email
-                  <input className={field + " mt-1"} style={fieldStyle} type="email" value={form.email}
-                    onChange={set("email")} required />
-                </label>
-                <label className="text-[12.5px] font-medium">Password
-                  <input className={field + " mt-1"} style={fieldStyle} type="password" value={form.password}
-                    onChange={set("password")} required />
-                </label>
-                <label className="text-[12.5px] font-medium">Confirm password
-                  <input className={field + " mt-1"} style={fieldStyle} type="password" value={form.confirm}
-                    onChange={set("confirm")} required />
-                </label>
-                {error && <div className="text-[12.5px]" style={{ color: "var(--critical)" }}>{error}</div>}
-                <Button type="submit" disabled={busy}>{busy ? "Creating…" : "Create admin & continue"}</Button>
-              </form>
-              <p className="mt-4 text-center text-[12px]" style={{ color: "var(--muted)" }}>
-                Already have an account? <Link to="/login" style={{ color: "var(--accent)" }}>Sign in</Link>
-              </p>
-            </>
-          )}
-        </div>
+            </div>
+
+            {error && <Alert tone="error">{error}</Alert>}
+
+            <Field label="Your name">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={form.full_name}
+                  onChange={set("full_name")}
+                  autoComplete="name"
+                  autoFocus
+                />
+              )}
+            </Field>
+
+            <Field label="Email" required>
+              {(p) => (
+                <Input
+                  {...p}
+                  type="email"
+                  value={form.email}
+                  onChange={set("email")}
+                  autoComplete="username"
+                  required
+                />
+              )}
+            </Field>
+
+            <Field label="Password" hint="At least 8 characters." required>
+              {(p) => (
+                <Input
+                  {...p}
+                  type="password"
+                  value={form.password}
+                  onChange={set("password")}
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              )}
+            </Field>
+
+            <Field label="Confirm password" required>
+              {(p) => (
+                <Input
+                  {...p}
+                  type="password"
+                  value={form.confirm}
+                  onChange={set("confirm")}
+                  autoComplete="new-password"
+                  required
+                />
+              )}
+            </Field>
+
+            <Button type="submit" loading={busy}>
+              Create account
+            </Button>
+
+            <p className="text-center text-sm text-muted">
+              Already have an account?{" "}
+              <Link to="/login" className="font-semibold text-accent">
+                Sign in
+              </Link>
+            </p>
+          </FormCard>
+        )}
       </div>
     </div>
   );
