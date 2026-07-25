@@ -1,15 +1,17 @@
 /** Systems list — every connected PC with its status and totals. */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import { qk } from "../api/queryKeys";
+import { fleetKeys, qk } from "../api/queryKeys";
 import type { SystemRow } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import {
   Button,
   Card,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   Eyebrow,
@@ -18,14 +20,35 @@ import {
   Table,
   Td,
   Th,
+  useToast,
 } from "../components/ui";
 import { fmtRelative, fmtTokens } from "../lib/format";
 
 export function Systems() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { can } = useAuth();
+  const canManage = can("manage_systems");
+
+  const [pendingDelete, setPendingDelete] = useState<SystemRow | null>(null);
+
   const q = useQuery({
     queryKey: qk.systems,
     queryFn: () => api.get<SystemRow[]>("/systems"),
     refetchInterval: 60_000,
+  });
+
+  const remove = useMutation({
+    mutationFn: (systemId: string) => api.del(`/admin/systems/${systemId}`),
+    onSuccess: () => {
+      fleetKeys.forEach((key) => qc.invalidateQueries({ queryKey: key }));
+      toast.push("System removed.");
+      setPendingDelete(null);
+    },
+    onError: (e: Error) => {
+      toast.push(e.message, "error");
+      setPendingDelete(null);
+    },
   });
 
   useEffect(() => {
@@ -68,6 +91,7 @@ export function Systems() {
                 <Th>Last sync</Th>
                 <Th align="right">Tracked</Th>
                 <Th align="right">Projects</Th>
+                {canManage && <Th align="right">Actions</Th>}
               </tr>
             </thead>
             <tbody>
@@ -91,12 +115,34 @@ export function Systems() {
                   <Td align="right" className="tnum text-ink-2">
                     {s.projects}
                   </Td>
+                  {canManage && (
+                    <Td align="right">
+                      <Button
+                        size="sm"
+                        variant="subtle"
+                        onClick={() => setPendingDelete(s)}
+                      >
+                        Remove
+                      </Button>
+                    </Td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </Table>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`Remove ${pendingDelete?.display_name}?`}
+        body="The PC, its API keys, and all usage data collected from it are deleted permanently. This cannot be undone — reconnecting later creates a new system with fresh history."
+        confirmLabel="Remove system"
+        destructive
+        busy={remove.isPending}
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete.system_id)}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

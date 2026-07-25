@@ -43,6 +43,13 @@ const schema = z.object({
   AGENT_REPO_URL: z
     .string()
     .default("https://github.com/Aniruth-Sakthivel/claude-code-uusage.git"),
+  /**
+   * Direct download URL for the standalone claudefleet.exe (built by
+   * .github/workflows/release-agent.yml). Overrides the URL derived from
+   * AGENT_REPO_URL — set this if the exe is hosted somewhere other than that
+   * repo's GitHub Releases.
+   */
+  AGENT_EXE_URL: z.string().optional(),
   /** Comma-separated CORS origins. Empty in production (same-origin on Netlify). */
   CORS_ORIGINS: z.string().default("http://localhost:5173,http://127.0.0.1:5173"),
 });
@@ -60,6 +67,7 @@ const parsed = schema.safeParse({
   NODE_ENV: pick("NODE_ENV"),
   PUBLIC_URL: pick("PUBLIC_URL", "URL", "DEPLOY_PRIME_URL"), // Netlify sets URL
   AGENT_REPO_URL: pick("AGENT_REPO_URL"),
+  AGENT_EXE_URL: pick("AGENT_EXE_URL"),
   CORS_ORIGINS: pick("CORS_ORIGINS", "CLAUDEFLEET_CORS_ORIGINS"),
 });
 
@@ -88,6 +96,16 @@ function checkPoolerPort(url: string): void {
 }
 checkPoolerPort(raw.DATABASE_URL);
 
+/**
+ * GitHub's stable "latest release" asset URL never changes across releases, so
+ * this needs no version bump when a new exe is published — see
+ * .github/workflows/release-agent.yml, which is what publishes it there.
+ */
+function deriveExeUrl(repoUrl: string): string {
+  const repoPage = repoUrl.replace(/\.git$/, "");
+  return `${repoPage}/releases/latest/download/claudefleet.exe`;
+}
+
 export const config = {
   ...raw,
   isProduction: raw.NODE_ENV === "production",
@@ -96,6 +114,7 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
   supabaseJwksUrl: `${raw.SUPABASE_URL.replace(/\/$/, "")}/auth/v1/.well-known/jwks.json`,
+  agentExeUrl: raw.AGENT_EXE_URL || deriveExeUrl(raw.AGENT_REPO_URL),
 } as const;
 
 export type Config = typeof config;

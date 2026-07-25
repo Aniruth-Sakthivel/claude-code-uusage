@@ -116,6 +116,15 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.code(201).send({ system: systemOut(system), api_key: apiKey });
   });
 
+  app.delete<{ Params: { id: string } }>(
+    "/api/v1/admin/systems/:id",
+    manageSystems,
+    async (req, reply) => {
+      await admin.deleteSystem(currentUser(req), req.params.id, requestContext(req));
+      return reply.code(204).send();
+    },
+  );
+
   app.get<{ Params: { id: string } }>(
     "/api/v1/admin/systems/:id/keys",
     manageKeys,

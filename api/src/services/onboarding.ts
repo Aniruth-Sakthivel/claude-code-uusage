@@ -204,6 +204,7 @@ export async function redeemEnrollToken(
     apiKey: redeemed.apiKeyPlain,
     displayName: redeemed.displayName,
     repoUrl: config.AGENT_REPO_URL,
+    exeUrl: config.agentExeUrl,
   });
 }
 
@@ -239,14 +240,22 @@ function manualSetupBlock(server: string, apiKey: string, displayName: string): 
  *
  * Mirrors deploy/install.ps1, but with the server URL, key, and machine name
  * already filled in so nothing has to be pasted by hand.
+ *
+ * Primary path: download the standalone claudefleet.exe (built by
+ * .github/workflows/release-agent.yml, ~10MB, no Python/pip/git required) to
+ * %LOCALAPPDATA%\ClaudeFleet\claudefleet.exe and run it directly — this is
+ * what makes "paste one line" actually work on a clean Windows PC. Falls back
+ * to the old pip/git path only if no release has been published yet or the
+ * download fails, so this keeps working during the transition.
  */
 export function renderInstallScript(opts: {
   server: string;
   apiKey: string;
   displayName: string;
   repoUrl: string;
+  exeUrl: string;
 }): string {
-  const { server, apiKey, displayName, repoUrl } = opts;
+  const { server, apiKey, displayName, repoUrl, exeUrl } = opts;
   // Single-quoted PowerShell literals; escape any embedded quote.
   const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
@@ -260,6 +269,9 @@ $Server      = ${q(server)}
 $ApiKey      = ${q(apiKey)}
 $DisplayName = ${q(displayName)}
 $RepoUrl     = ${q(repoUrl)}
+$ExeUrl      = ${q(exeUrl)}
+$InstallDir  = Join-Path $env:LOCALAPPDATA 'ClaudeFleet'
+$ExePath     = Join-Path $InstallDir 'claudefleet.exe'
 
 Write-Host ''
 Write-Host '=== ClaudeFleet setup ===' -ForegroundColor Cyan
@@ -267,51 +279,73 @@ Write-Host ("  PC:     {0}" -f $DisplayName)
 Write-Host ("  Server: {0}" -f $Server)
 Write-Host ''
 
-# --- 1. locate Python -------------------------------------------------------
-$py = $null
-foreach ($candidate in @('python', 'py')) {
-  $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-  if ($cmd) { $py = if ($candidate -eq 'py') { @('py', '-3') } else { @('python') }; break }
-}
-if (-not $py) {
-  Write-Host 'Python 3.10+ was not found on PATH.' -ForegroundColor Red
-  Write-Host 'Install it from https://python.org (tick "Add python.exe to PATH"), then re-run this command.'
-  exit 1
+# --- 1. get the agent --------------------------------------------------------
+# Preferred: standalone exe, no Python/pip/git needed on this PC.
+$exe = $null
+Write-Host 'Downloading the ClaudeFleet agent...'
+try {
+  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+  Invoke-WebRequest -Uri $ExeUrl -OutFile $ExePath -UseBasicParsing
+  & $ExePath --version | Out-Null
+  if ($LASTEXITCODE -eq 0) { $exe = $ExePath }
+} catch {
+  Write-Host 'Standalone download unavailable - falling back to pip install...' -ForegroundColor Yellow
 }
 
-# --- 2. install the agent ---------------------------------------------------
-Write-Host 'Installing the ClaudeFleet agent...'
-& $py -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-& $py -m pip install claudefleet-agent --quiet 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-  Write-Host 'PyPI package unavailable - installing from source...'
-  & $py -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host 'Could not install the agent.' -ForegroundColor Red
+$py = $null
+$runner = $null
+if ($exe) {
+  $runner = { param($FleetArgs) & $exe @FleetArgs }
+} else {
+  # Fallback: needs Python (and git for the source install) on PATH.
+  foreach ($candidate in @('python', 'py')) {
+    $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+    if ($cmd) { $py = if ($candidate -eq 'py') { @('py', '-3') } else { @('python') }; break }
+  }
+  if (-not $py) {
+    Write-Host 'Python 3.10+ was not found on PATH.' -ForegroundColor Red
+    Write-Host 'Install it from https://python.org (tick "Add python.exe to PATH"), then re-run this command.'
     exit 1
+  }
+
+  Write-Host 'Installing the ClaudeFleet agent (pip)...'
+  & $py[0] $py[1..($py.Length-1)] -m pip install --upgrade pip --quiet 2>&1 | Out-Null
+  & $py[0] $py[1..($py.Length-1)] -m pip install claudefleet-agent --quiet 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host 'PyPI package unavailable - installing from source...'
+    & $py[0] $py[1..($py.Length-1)] -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host 'Could not install the agent.' -ForegroundColor Red
+      exit 1
+    }
+  }
+
+  $cliCmd = Get-Command claudefleet -ErrorAction SilentlyContinue
+  if ($cliCmd) {
+    $runner = { param($FleetArgs) & claudefleet @FleetArgs }
+  } else {
+    $runner = { param($FleetArgs) & $py[0] $py[1..($py.Length-1)] -m claudefleet @FleetArgs }
   }
 }
 
-function Invoke-Fleet {
-  param([string[]]$FleetArgs)
-  $exe = Get-Command claudefleet -ErrorAction SilentlyContinue
-  if ($exe) { & claudefleet @FleetArgs } else { & $py -m claudefleet @FleetArgs }
-}
-
-# --- 3. register this machine ----------------------------------------------
+# --- 2. register this machine ------------------------------------------------
 Write-Host 'Connecting this PC to the dashboard...'
-Invoke-Fleet @('register', '--server', $Server, '--api-key', $ApiKey, '--display-name', $DisplayName)
+& $runner @('register', '--server', $Server, '--api-key', $ApiKey, '--display-name', $DisplayName)
 
-# --- 4. first scan + sync ---------------------------------------------------
+# --- 3. first scan + sync -----------------------------------------------------
 Write-Host 'Scanning Claude Code transcripts (this may take a moment)...'
-Invoke-Fleet @('scan')
+& $runner @('scan')
 Write-Host 'Sending usage to the dashboard...'
-Invoke-Fleet @('sync')
+& $runner @('sync')
 
-# --- 5. keep it up to date automatically ------------------------------------
+# --- 4. keep it up to date automatically --------------------------------------
 $taskName = 'ClaudeFleet Scan+Sync'
-$pyExe    = if ($py.Count -gt 1) { 'py -3' } else { 'python' }
-$action   = "$pyExe -m claudefleet scan --quiet & $pyExe -m claudefleet sync --quiet"
+if ($exe) {
+  $action = '"' + $exe + '" scan --quiet & "' + $exe + '" sync --quiet'
+} else {
+  $pyExe  = if ($py.Count -gt 1) { 'py -3' } else { 'python' }
+  $action = "$pyExe -m claudefleet scan --quiet & $pyExe -m claudefleet sync --quiet"
+}
 schtasks /Delete /TN $taskName /F 2>&1 | Out-Null
 schtasks /Create /SC MINUTE /MO 15 /TN $taskName /TR "cmd /c $action" /ST 00:00 /F 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 0) {

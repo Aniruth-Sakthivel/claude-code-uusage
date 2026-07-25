@@ -6,6 +6,11 @@ venv/
 *.egg-info/
 .pytest_cache/
 
+# PyInstaller build output (agent/entry.py -> dist/claudefleet.exe)
+agent/build/
+agent/dist/
+agent/*.spec
+
 # Databases / local state
 *.db
 *.db-wal

@@ -75,6 +75,39 @@ export async function createSystem(
   return { system: created.system, apiKey: fullKey, keyRow: created.key };
 }
 
+/**
+ * Delete a system permanently.
+ *
+ * Keys, usage events, daily aggregates, enroll tokens, and user assignments all
+ * reference `systems.systemId` with `onDelete: cascade` (see db/schema.ts), so
+ * removing the row removes everything tied to it in one statement — including
+ * previously-tracked usage. There is no separate "just unassign it" path; if a
+ * PC is retired, this is the only way to remove it from the fleet.
+ */
+export async function deleteSystem(
+  actor: Principal,
+  systemId: string,
+  ctx: RequestContext = {},
+) {
+  const system = await repo.getSystem(systemId);
+  if (!system) throw notFound("System not found");
+
+  await db.transaction(async (tx) => {
+    await repo.writeAudit(
+      {
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        action: "system.deleted",
+        target: systemId,
+        detail: system.displayName,
+        ...ctx,
+      },
+      tx,
+    );
+    await tx.delete(systems).where(eq(systems.systemId, systemId));
+  });
+}
+
 export async function issueApiKey(
   actor: Principal,
   systemId: string,

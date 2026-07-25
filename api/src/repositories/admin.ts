@@ -138,6 +138,11 @@ export async function systemExists(systemId: string, conn: DbLike = db): Promise
   return rows.length > 0;
 }
 
+export async function getSystem(systemId: string, conn: DbLike = db) {
+  const rows = await conn.select().from(systems).where(eq(systems.systemId, systemId)).limit(1);
+  return rows[0] ?? null;
+}
+
 // ── api keys ──────────────────────────────────────────────────────────────────
 export async function listApiKeys(systemId: string) {
   return db
