@@ -19,7 +19,13 @@ async function getApp(): Promise<FastifyInstance> {
       const app = await buildApp();
       await app.ready();
       return app;
-    })();
+    })().catch((err) => {
+      // Don't memoize a failed cold start — otherwise one transient failure
+      // (e.g. a DB hiccup) permanently breaks every request on this warm
+      // container until Netlify recycles it. Let the next invocation retry.
+      appPromise = null;
+      throw err;
+    });
   }
   return appPromise;
 }
