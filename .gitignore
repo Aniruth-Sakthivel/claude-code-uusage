@@ -23,6 +23,12 @@ web/dist/
 api/dist/
 *.tsbuildinfo
 *.local
+# Not committed: this workspace has native-binary optional deps (lightningcss,
+# esbuild, rollup). A lockfile generated on one OS records only that OS's
+# variant, so a Windows-generated lockfile breaks Netlify's Linux build (see
+# the "Cannot find module lightningcss.linux-x64-gnu.node" incident). Each
+# environment resolves its own platform-correct deps via plain `npm install`.
+package-lock.json
 
 # Netlify
 .netlify/
