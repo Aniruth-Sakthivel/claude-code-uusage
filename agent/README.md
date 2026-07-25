@@ -18,6 +18,9 @@ works fully offline — no server required.**
 The agent uses **only the Python standard library** — there is nothing to
 `pip install` for scanning.
 
+> For **central mode** (sending usage to the dashboard) you install the
+> `claudefleet` command from the repo, which needs **git** on `PATH` — see §7.
+
 ---
 
 ## 2. Install

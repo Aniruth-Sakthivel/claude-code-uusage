@@ -5,8 +5,8 @@ export function serverUrl(): string {
 
 export const AGENT_INSTALL = "pip install claudefleet-agent";
 
-/** Fallback when the package is not on PyPI yet — replace with your repo URL. */
-export function agentInstallFromGit(repoUrl = "https://github.com/YOUR-ORG/claude-code-uusage.git"): string {
+/** Fallback when the package is not on PyPI yet — installs from the repo (needs git). */
+export function agentInstallFromGit(repoUrl = "https://github.com/Aniruth-Sakthivel/claude-code-uusage.git"): string {
   return `pip install "git+${repoUrl}#subdirectory=agent"`;
 }
 

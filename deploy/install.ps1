@@ -16,7 +16,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Name,
 
-    [string]$RepoUrl = "https://github.com/YOUR-ORG/claude-code-uusage.git",
+    [string]$RepoUrl = "https://github.com/Aniruth-Sakthivel/claude-code-uusage.git",
 
     [switch]$SkipSchedule
 )

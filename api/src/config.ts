@@ -42,7 +42,7 @@ const schema = z.object({
   /** Git repo used as the agent install fallback when it is not on PyPI. */
   AGENT_REPO_URL: z
     .string()
-    .default("https://github.com/YOUR-ORG/claude-code-uusage.git"),
+    .default("https://github.com/Aniruth-Sakthivel/claude-code-uusage.git"),
   /** Comma-separated CORS origins. Empty in production (same-origin on Netlify). */
   CORS_ORIGINS: z.string().default("http://localhost:5173,http://127.0.0.1:5173"),
 });

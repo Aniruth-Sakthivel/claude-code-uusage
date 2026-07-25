@@ -6,8 +6,8 @@
     python -m claudefleet stats      # all-time statistics
     python -m claudefleet identity   # show this machine's system_id
 
-Local mode needs no central server. Central-mode commands (register/sync) are
-added in a later phase.
+Local mode needs no central server. Central-mode commands (register/sync/
+heartbeat) push usage to a central dashboard; see `--help` for each.
 """
 
 from __future__ import annotations
