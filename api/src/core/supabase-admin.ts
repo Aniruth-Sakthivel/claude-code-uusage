@@ -11,9 +11,18 @@
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 
 import { config } from "../config.js";
 import { badRequest } from "./errors.js";
+
+// supabase-js unconditionally constructs a realtime client, which requires a
+// global WebSocket (native only on Node 22+). Netlify Functions run Node 20,
+// and this module never opens a realtime channel — it only calls
+// auth.admin.* REST methods — so a polyfill is enough to satisfy the check.
+if (typeof globalThis.WebSocket === "undefined") {
+  (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+}
 
 let cached: SupabaseClient | null = null;
 
