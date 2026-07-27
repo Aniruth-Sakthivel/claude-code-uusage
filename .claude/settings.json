@@ -59,7 +59,10 @@
       "PowerShell(schtasks /Delete /TN \"ClaudeFleet Daemon\" /F 2>$null)",
       "PowerShell(schtasks /Delete /TN \"ClaudeFleet Daemon Watchdog\" /F 2>$null)",
       "Bash(grep -n -i \"localhost\\\\|http://\\\\|BASE\\\\|url\")",
-      "Bash(grep -n -i \"localhost\\\\|http://\\\\|url\")"
+      "Bash(grep -n -i \"localhost\\\\|http://\\\\|url\")",
+      "Bash(curl -sI \"https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/claudefleet.exe\")",
+      "Bash(curl -sIL \"https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/claudefleet.exe\" -o /dev/null -w \"%{http_code} %{size_download} %{url_effective}\\\\n\")",
+      "Bash(git add *)"
     ],
     "additionalDirectories": [
       "\\tmp",

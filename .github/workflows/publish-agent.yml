@@ -1,0 +1,48 @@
+name: Publish agent to PyPI
+
+# Builds the claudefleet-agent sdist/wheel and publishes to PyPI whenever a tag
+# matching agent-v* is pushed — the same trigger as the .exe release workflow.
+# Uses PyPI Trusted Publishing (OIDC), so no API token/secret is stored here.
+#
+# One-time setup required before this works: register this repo + workflow as
+# a "pending publisher" for the claudefleet-agent project at
+# https://pypi.org/manage/account/publishing/
+#
+# Cut a release (same tag triggers both this and release-agent.yml):
+#   git tag agent-v0.1.0
+#   git push origin agent-v0.1.0
+
+on:
+  push:
+    tags:
+      - "agent-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for OIDC trusted publishing
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent/dist
