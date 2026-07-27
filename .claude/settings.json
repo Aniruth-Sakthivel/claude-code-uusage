@@ -33,11 +33,38 @@
       "Bash(gh --version)",
       "Bash(curl -s \"https://api.github.com/repos/Aniruth-Sakthivel/claude-code-uusage/releases\")",
       "Bash(curl -sI -L \"https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/claudefleet.exe\")",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "PowerShell(Get-Command claudefleet -ErrorAction SilentlyContinue; Test-Path \"$env:LOCALAPPDATA\\\\ClaudeFleet\\\\claudefleet.exe\")",
+      "PowerShell(Get-ChildItem -Recurse -Filter \"claudefleet.exe\" -Path \"$env:USERPROFILE\",\"$env:LOCALAPPDATA\",\"C:\\\\\" -ErrorAction SilentlyContinue -Depth 4 2>$null | Select-Object -First 5 FullName)",
+      "PowerShell(& \"D:\\\\Github\\\\claudefleet.exe\" identity)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/api/v1/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/health)",
+      "PowerShell(& \"D:\\\\Github\\\\claudefleet.exe\" register --server http://localhost:8000 --api-key cfk_nnWeDW_5 --display-name Ghost)",
+      "PowerShell(& \"D:\\\\Github\\\\claudefleet.exe\" register --server http://localhost:8000 --api-key cfk_zGU98fyFs6cEuFQpnEEeW7br_bv9lp6YKzocK2xIqFk --display-name Ghost)",
+      "PowerShell(& \"D:\\\\Github\\\\claudefleet.exe\" scan)",
+      "PowerShell(& \"D:\\\\Github\\\\claudefleet.exe\" sync)",
+      "Bash(curl -s \"http://127.0.0.1:5173/api/v1/connect/script/fJk5ckavgnt2zKYBFproXq0UniiZ-5LUoSXJaviET4c\")",
+      "PowerShell(\\(Invoke-WebRequest -Uri \"http://127.0.0.1:5173/api/v1/connect/script/fJk5ckavgnt2zKYBFproXq0UniiZ-5LUoSXJaviET4c\" -UseBasicParsing\\).Content)",
+      "PowerShell(Test-NetConnection -ComputerName 127.0.0.1 -Port 5173 -WarningAction SilentlyContinue)",
+      "PowerShell(Test-NetConnection -ComputerName 127.0.0.1 -Port 8000 -WarningAction SilentlyContinue)",
+      "PowerShell(\\(Invoke-WebRequest -Uri \"http://127.0.0.1:8000/api/v1/connect/script/fJk5ckavgnt2zKYBFproXq0UniiZ-5LUoSXJaviET4c\" -UseBasicParsing\\).Content)",
+      "Bash(curl -s \"http://127.0.0.1:8000/api/v1/connect/script/fJk5ckavgnt2zKYBFproXq0UniiZ-5LUoSXJaviET4c\")",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\aniru\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Github-claud-code-usage\\\\4585aa82-0cc4-4477-baa6-366e899e616e\\\\scratchpad\\\\connect-fixed.ps1\")",
+      "PowerShell(Get-Process -Name claudefleet -ErrorAction SilentlyContinue)",
+      "PowerShell(Start-Process -FilePath \"D:\\\\Github\\\\claudefleet.exe\" -ArgumentList \"daemon\" -WindowStyle Hidden)",
+      "Bash(powershell -NoProfile -Command \"& 'D:\\\\Github\\\\claudefleet.exe' daemon\")",
+      "PowerShell(& \"D:\\\\Github\\\\claudefleet.exe\" stats)",
+      "PowerShell(schtasks /Delete /TN \"ClaudeFleet Scan+Sync\" /F)",
+      "PowerShell(schtasks /Delete /TN \"ClaudeFleet Scan\" /F 2>$null)",
+      "PowerShell(schtasks /Delete /TN \"ClaudeFleet Daemon\" /F 2>$null)",
+      "PowerShell(schtasks /Delete /TN \"ClaudeFleet Daemon Watchdog\" /F 2>$null)",
+      "Bash(grep -n -i \"localhost\\\\|http://\\\\|BASE\\\\|url\")",
+      "Bash(grep -n -i \"localhost\\\\|http://\\\\|url\")"
     ],
     "additionalDirectories": [
       "\\tmp",
-      "D:\\Github\\claud-code-usage\\deploy"
+      "D:\\Github\\claud-code-usage\\deploy",
+      "D:\\Github"
     ]
   }
 }

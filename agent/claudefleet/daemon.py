@@ -165,6 +165,7 @@ class Daemon:
             },
         )
         await self._start_ws()
+        self._health.save()
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):

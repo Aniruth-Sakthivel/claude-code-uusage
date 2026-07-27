@@ -111,11 +111,15 @@ export function ConnectPanel({
           <li>
             <div className="mb-2 text-base font-medium">2. Paste this one line and press Enter</div>
             <CodeBlock code={result.install_command} />
-            <p className="mt-2 text-sm text-muted">
-              This downloads the agent (a small .exe — no Python or install required),
-              connects this PC, runs a first scan, and keeps scanning every 60 seconds in
-              the background. Nothing else is needed afterwards.
-            </p>
+            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="font-medium text-slate-900">What this does</div>
+              <ul className="mt-2 list-disc space-y-2 pl-5">
+                <li>Run this in <strong>PowerShell on the PC you want to track</strong>.</li>
+                <li>The website only generates the setup command and a one-time enrollment token.</li>
+                <li>The agent on that PC installs, registers with the server, scans local Claude Code transcripts, and syncs usage to the dashboard.</li>
+                <li>After setup, the agent continues scanning and syncing automatically in the background.</li>
+              </ul>
+            </div>
             <p className="mt-2 text-sm text-muted">
               Prefer not to run a command?{" "}
               <a

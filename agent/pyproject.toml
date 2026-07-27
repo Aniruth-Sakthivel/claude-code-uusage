@@ -9,6 +9,19 @@ description = "ClaudeFleet local agent — scans Claude Code usage and syncs to 
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
+authors = [{ name = "ClaudeFleet" }]
+keywords = ["claudefleet", "claude-code", "agent", "usage", "sync", "dashboard"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: Other/Proprietary License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
 # Local mode is pure stdlib. `sync` (central mode) adds a small HTTP client dep
 # in a later phase via the [sync] extra.
 dependencies = []
@@ -20,6 +33,11 @@ build = ["pyinstaller>=6.0"]
 # Powers `claudefleet daemon`'s WebSocket push. Local/REST modes stay
 # dependency-free on purpose; this is the one opt-in exception.
 realtime = ["websockets>=12.0"]
+
+[project.urls]
+Homepage = "https://github.com/Aniruth-Sakthivel/claude-code-uusage"
+Repository = "https://github.com/Aniruth-Sakthivel/claude-code-uusage"
+Documentation = "https://github.com/Aniruth-Sakthivel/claude-code-uusage#readme"
 
 [project.scripts]
 claudefleet = "claudefleet.cli:main"

@@ -98,11 +98,15 @@ Invoke-ClaudeFleet -FleetArgs @("sync")
 if (-not $SkipSchedule) {
     $taskName = "ClaudeFleet Scan+Sync"
     if ($exe) {
-        $action = '"' + $exe + '" scan --quiet && "' + $exe + '" sync --quiet'
+        $inner = '"' + $exe + '" scan --quiet && "' + $exe + '" sync --quiet'
     } else {
         $pyExe = if ($py.Count -gt 1) { "py -3" } else { "python" }
-        $action = "$pyExe -m claudefleet scan --quiet && $pyExe -m claudefleet sync --quiet"
+        $inner = "$pyExe -m claudefleet scan --quiet && $pyExe -m claudefleet sync --quiet"
     }
+    # schtasks /TR does not go through cmd.exe, so "&&" must be wrapped in an
+    # explicit cmd /c call - otherwise it's passed as a literal argument to the
+    # first command and sync never runs.
+    $action = 'cmd /c "' + $inner.Replace('"', '\"') + '"'
     schtasks /Delete /TN $taskName /F 2>$null | Out-Null
     schtasks /Create /SC MINUTE /MO 15 /TN $taskName /TR $action /ST 00:00 /F | Out-Null
     Write-Host "Scheduled task '$taskName' - scan + sync every 15 minutes."

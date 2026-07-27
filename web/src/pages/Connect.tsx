@@ -43,8 +43,9 @@ export function Connect() {
         <Eyebrow>Setup</Eyebrow>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Connect a PC</h1>
         <p className="mt-1.5 max-w-2xl text-base text-muted">
-          Run one command on the machine you want to track. After that it scans and syncs
-          on its own every 15 minutes.
+          Run one command in PowerShell on the machine you want to track. The website
+          only generates the setup instructions; the agent on that PC does the scan and
+          sends data back to the dashboard every 15 minutes.
         </p>
       </div>
 

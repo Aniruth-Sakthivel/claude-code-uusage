@@ -147,7 +147,7 @@ export async function connectPc(
   return {
     systemId: result.systemId,
     displayName: result.displayName,
-    installCommand: `irm ${base}/api/v1/connect/script/${token} | iex`,
+    installCommand: `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${base}/api/v1/connect/script/${token}' | iex"`,
     manualCommands: manualSetupBlock(base, fullKey, result.displayName),
     apiKey: fullKey,
     expiresAt,
@@ -361,6 +361,11 @@ if ($exe) {
 Write-Host 'Starting the ClaudeFleet daemon (scans every 60s in the background)...'
 Start-Process -FilePath $launchFile -ArgumentList $launchArgs -WindowStyle Hidden
 
+Write-Host 'Waiting briefly for the agent to start...'
+Start-Sleep -Seconds 5
+Write-Host 'Checking local agent health:'
+& $runner @('health')
+
 $daemonTask = 'ClaudeFleet Daemon'
 $daemonAction = '"' + $launchFile + '" ' + ($launchArgs -join ' ')
 schtasks /Delete /TN $daemonTask /F 2>&1 | Out-Null
@@ -408,6 +413,7 @@ if ($LASTEXITCODE -eq 0) {
 
 Write-Host ''
 Write-Host 'Done. This PC now reports to your ClaudeFleet dashboard.' -ForegroundColor Green
+Write-Host 'Run "claudefleet health" on this PC anytime to verify the local agent status.'
 Write-Host ("Open {0} to see it." -f $Server)
 Write-Host ''
 `;
