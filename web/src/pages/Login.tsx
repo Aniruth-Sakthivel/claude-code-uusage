@@ -103,6 +103,12 @@ export function Login() {
             )}
           </Field>
 
+          <div className="-mt-2 text-right">
+            <Link to="/forgot-password" className="text-sm font-semibold text-accent">
+              Forgot password?
+            </Link>
+          </div>
+
           <Button type="submit" loading={busy}>
             Sign in
           </Button>

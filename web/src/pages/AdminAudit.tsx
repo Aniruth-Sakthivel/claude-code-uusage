@@ -15,12 +15,15 @@ import {
   EmptyState,
   ErrorState,
   Eyebrow,
+  Input,
   LoadingState,
+  Pagination,
   Table,
   Td,
   Th,
 } from "../components/ui";
 import { fmtRelative } from "../lib/format";
+import { useTableControls } from "../lib/useTableControls";
 
 /** Destructive or security-relevant actions stand out. */
 function toneFor(action: string): "neutral" | "accent" | "critical" {
@@ -35,6 +38,17 @@ export function AdminAudit() {
   useEffect(() => {
     document.title = "Audit log — ClaudeFleet";
   }, []);
+
+  const table = useTableControls(q.data, {
+    searchText: (a) => `${a.actor_email} ${a.action} ${a.target ?? ""} ${a.detail ?? ""}`,
+    sorters: {
+      when: (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
+      action: (a, b) => a.action.localeCompare(b.action),
+      actor: (a, b) => a.actor_email.localeCompare(b.actor_email),
+    },
+    initialSortKey: "when",
+    initialSortDir: "desc",
+  });
 
   return (
     <div className="flex flex-col gap-5">
@@ -55,30 +69,69 @@ export function AdminAudit() {
         ) : q.data!.length === 0 ? (
           <EmptyState title="No activity recorded yet" />
         ) : (
-          <Table caption="Recent administrative activity">
-            <thead>
-              <tr>
-                <Th>When</Th>
-                <Th>Action</Th>
-                <Th>Actor</Th>
-                <Th>Target</Th>
-                <Th>Detail</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {q.data!.map((a) => (
-                <tr key={a.id}>
-                  <Td className="whitespace-nowrap text-ink-2">{fmtRelative(a.at)}</Td>
-                  <Td>
-                    <Badge tone={toneFor(a.action)}>{a.action}</Badge>
-                  </Td>
-                  <Td className="text-ink-2">{a.actor_email}</Td>
-                  <Td className="text-ink-2">{a.target || "—"}</Td>
-                  <Td className="text-muted">{a.detail || "—"}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+          <>
+            <div className="mb-3">
+              <Input
+                type="search"
+                placeholder="Search by actor, action, target, or detail…"
+                value={table.query}
+                onChange={(e) => table.setQuery(e.target.value)}
+                aria-label="Search audit log"
+              />
+            </div>
+            {table.total === 0 ? (
+              <EmptyState title="No activity matches your search" />
+            ) : (
+              <Table caption="Recent administrative activity">
+                <thead>
+                  <tr>
+                    <Th
+                      sortDir={table.sortKey === "when" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("when")}
+                    >
+                      When
+                    </Th>
+                    <Th
+                      sortDir={table.sortKey === "action" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("action")}
+                    >
+                      Action
+                    </Th>
+                    <Th
+                      sortDir={table.sortKey === "actor" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("actor")}
+                    >
+                      Actor
+                    </Th>
+                    <Th>Target</Th>
+                    <Th>Detail</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.map((a) => (
+                    <tr key={a.id}>
+                      <Td className="whitespace-nowrap text-ink-2">{fmtRelative(a.at)}</Td>
+                      <Td>
+                        <Badge tone={toneFor(a.action)}>{a.action}</Badge>
+                      </Td>
+                      <Td className="text-ink-2">{a.actor_email}</Td>
+                      <Td className="text-ink-2">{a.target || "—"}</Td>
+                      <Td className="max-w-xs truncate text-muted">
+                        <span title={a.detail || undefined}>{a.detail || "—"}</span>
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+            <Pagination
+              page={table.page}
+              pageCount={table.pageCount}
+              total={table.total}
+              pageSize={table.pageSize}
+              onPage={table.setPage}
+            />
+          </>
         )}
       </Card>
     </div>

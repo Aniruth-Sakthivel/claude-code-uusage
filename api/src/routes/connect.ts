@@ -8,7 +8,6 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
-import { config } from "../config.js";
 import { currentUser, requestContext, requireUser } from "../core/guards.js";
 import { visibleSystemIds } from "../core/rbac.js";
 import { connectRequest } from "../schemas/index.js";
@@ -42,8 +41,6 @@ export async function connectRoutes(app: FastifyInstance) {
       display_name: result.displayName,
       install_command: result.installCommand,
       manual_commands: result.manualCommands,
-      /** Direct download, for people who'd rather run an exe than paste a command. */
-      exe_url: config.agentExeUrl,
       api_key: result.apiKey,
       expires_at: result.expiresAt.toISOString(),
     };

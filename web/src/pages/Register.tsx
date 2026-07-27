@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { RegistrationStatus } from "../api/types";
-import { useAuth } from "../auth/AuthContext";
+import { EmailConfirmationRequiredError, useAuth } from "../auth/AuthContext";
 import { Brand } from "../components/Layout";
 import {
   Alert,
@@ -37,6 +37,7 @@ export function Register() {
     confirm: "",
   });
   const [error, setError] = useState<string | null>(null);
+  const [checkEmailMessage, setCheckEmailMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const registration = useQuery({
@@ -61,11 +62,18 @@ export function Register() {
     }
     setBusy(true);
     setError(null);
+    setCheckEmailMessage(null);
     try {
       await signUp(form.email.trim(), form.full_name.trim(), form.password);
       navigate("/welcome", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create the account");
+      if (err instanceof EmailConfirmationRequiredError) {
+        // A success, not a failure — the account was created, it just needs
+        // confirming. Shown as a neutral state, not a red error.
+        setCheckEmailMessage(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : "Could not create the account");
+      }
     } finally {
       setBusy(false);
     }
@@ -82,7 +90,17 @@ export function Register() {
           <Brand />
         </div>
 
-        {registration.isLoading ? (
+        {checkEmailMessage ? (
+          <Card className="text-center">
+            <h1 className="text-xl font-semibold tracking-tight">Check your email</h1>
+            <p className="mt-2 text-sm text-muted">{checkEmailMessage}</p>
+            <div className="mt-5">
+              <Link to="/login">
+                <Button variant="ghost">Back to sign in</Button>
+              </Link>
+            </div>
+          </Card>
+        ) : registration.isLoading ? (
           <Card>
             <LoadingState />
           </Card>

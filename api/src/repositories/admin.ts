@@ -129,6 +129,20 @@ export async function replaceUserSystems(
   }
 }
 
+/** Additive grant — unlike replaceUserSystems, never touches the user's other
+ * assignments. Used when a developer connects their own PC, so it doesn't
+ * silently revoke access an admin already granted elsewhere. */
+export async function addUserSystem(
+  userId: number,
+  systemId: string,
+  conn: DbLike = db,
+): Promise<void> {
+  await conn
+    .insert(userSystems)
+    .values({ userId, systemId })
+    .onConflictDoNothing({ target: [userSystems.userId, userSystems.systemId] });
+}
+
 export async function systemExists(systemId: string, conn: DbLike = db): Promise<boolean> {
   const rows = await conn
     .select({ id: systems.systemId })

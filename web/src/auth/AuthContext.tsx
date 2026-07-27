@@ -27,6 +27,11 @@ import { api, ApiError, setUnauthorizedHandler } from "../api/client";
 import type { Capability, User } from "../api/types";
 import { supabase } from "../lib/supabase";
 
+/** Thrown by signUp() when the account was created but needs email
+ * confirmation before a session exists — a success, not a failure, so
+ * callers should render it distinctly from a real error. */
+export class EmailConfirmationRequiredError extends Error {}
+
 interface AuthState {
   user: User | null;
   loading: boolean;
@@ -52,6 +57,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return me;
   }, []);
 
+  // Shared by initial load AND cross-tab/email-link sign-in: a valid Supabase
+  // session with no local account yet tries to provision (first-run admin),
+  // otherwise signs out cleanly. Previously only the initial-mount path did
+  // this — a session established via SIGNED_IN (e.g. clicking an email
+  // confirmation link) hit the same 401 but silently swallowed it, leaving
+  // the user looking signed-out with no error and no explanation.
+  const loadOrProvisionUser = useCallback(async () => {
+    try {
+      await loadUser();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        try {
+          setUser(await api.post<User>("/auth/provision"));
+        } catch {
+          await supabase.auth.signOut();
+        }
+      } else {
+        throw e;
+      }
+    }
+  }, [loadUser]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -62,22 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } = await supabase.auth.getSession();
         if (cancelled) return;
         if (!session) return;
-
-        try {
-          await loadUser();
-        } catch (e) {
-          // A valid Supabase session with no local account yet: try to
-          // provision (first-run admin), otherwise sign out cleanly.
-          if (e instanceof ApiError && e.status === 401) {
-            try {
-              setUser(await api.post<User>("/auth/provision"));
-            } catch {
-              await supabase.auth.signOut();
-            }
-          } else {
-            throw e;
-          }
-        }
+        // A password-recovery link establishes a real (if short-lived)
+        // session before this page even mounts — don't treat that as a
+        // normal login and pull the user into the full app mid-reset.
+        if (window.location.pathname === "/reset-password") return;
+        await loadOrProvisionUser();
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Could not restore your session");
@@ -93,9 +109,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         setUser(null);
+      } else if (event === "PASSWORD_RECOVERY") {
+        // Handled entirely by the /reset-password page itself.
       } else if (event === "SIGNED_IN" && session) {
-        // Covers sign-in from another tab.
-        loadUser().catch(() => {});
+        // Covers sign-in from another tab, and landing back from an email
+        // confirmation/invite link.
+        loadOrProvisionUser().catch(() => {});
       }
       // TOKEN_REFRESHED needs no action: the client reads the session per
       // request, so the new token is picked up automatically.
@@ -105,7 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, [loadUser]);
+  }, [loadOrProvisionUser]);
 
   // Session expiry reported by the API — sign out once, centrally.
   useEffect(() => {
@@ -138,15 +157,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (signUpError) throw new Error(friendlyAuthError(signUpError.message));
     // With email confirmation enabled there is no session yet, so provisioning
-    // would 401. Tell the user to confirm instead of failing opaquely.
+    // would 401. This is a distinct type (not a plain Error) so the caller can
+    // render it as a neutral "check your inbox" state instead of a red error —
+    // the signup itself succeeded.
     if (!data.session) {
-      throw new Error(
+      throw new EmailConfirmationRequiredError(
         "Check your email to confirm your account, then sign in.",
       );
     }
-    const me = await api.post<User>("/auth/provision");
-    setUser(me);
-    return me;
+    try {
+      const me = await api.post<User>("/auth/provision");
+      setUser(me);
+      return me;
+    } catch {
+      // The Supabase account exists; only linking the local profile failed
+      // (network blip, server hiccup). Provisioning is idempotent, so signing
+      // in again resolves it — tell the user that, not a generic failure.
+      throw new Error(
+        "Your account was created, but we couldn't finish setting it up. Please sign in again.",
+      );
+    }
   }, []);
 
   const logout = useCallback(async () => {

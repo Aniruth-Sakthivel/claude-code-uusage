@@ -26,7 +26,7 @@ import { db } from "../db/client.js";
 import { apiKeys, enrollTokens, systems } from "../db/schema.js";
 import { generateApiKey } from "../core/auth-agent.js";
 import { forbidden, notFound } from "../core/errors.js";
-import type { Principal } from "../core/rbac.js";
+import { DEVELOPER, type Principal } from "../core/rbac.js";
 import * as repo from "../repositories/admin.js";
 import { allowsSystem, type Allowed } from "../repositories/scope.js";
 
@@ -140,6 +140,13 @@ export async function connectPc(
       tx,
     );
 
+    // Developers only see systems explicitly assigned to them (visibleSystemIds
+    // is restrictive for that role, unlike admin/manager/viewer) — without
+    // this, a developer connecting their own PC wouldn't see it afterward.
+    if (actor.role === DEVELOPER) {
+      await repo.addUserSystem(actor.id, systemId, tx);
+    }
+
     return { systemId, displayName };
   });
 
@@ -148,7 +155,7 @@ export async function connectPc(
     systemId: result.systemId,
     displayName: result.displayName,
     installCommand: `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${base}/api/v1/connect/script/${token}' | iex"`,
-    manualCommands: manualSetupBlock(base, fullKey, result.displayName),
+    manualCommands: manualSetupBlock(base, result.displayName, fullKey, config.PUBLIC_WS_URL),
     apiKey: fullKey,
     expiresAt,
   };
@@ -204,7 +211,7 @@ export async function redeemEnrollToken(
     apiKey: redeemed.apiKeyPlain,
     displayName: redeemed.displayName,
     repoUrl: config.AGENT_REPO_URL,
-    exeUrl: config.agentExeUrl,
+    wsUrl: config.PUBLIC_WS_URL,
   });
 }
 
@@ -221,17 +228,52 @@ export async function sweepEnrollTokens(): Promise<void> {
     );
 }
 
-function manualSetupBlock(server: string, apiKey: string, displayName: string): string {
+/** Real values are baked directly into this block — server URL, API key, and
+ * (when configured) the WebSocket URL for live status push — since it's only
+ * ever shown once, to the authenticated user who just generated it. */
+function manualSetupBlock(
+  server: string,
+  displayName: string,
+  apiKey: string,
+  wsUrl?: string,
+): string {
+  const registerArgs = [
+    "claudefleet register",
+    `--server ${server}`,
+    `--api-key ${apiKey}`,
+    `--display-name ${displayName}`,
+  ];
+  if (wsUrl) registerArgs.push(`--ws-url ${wsUrl}`);
+
   return [
     "# 1 - install the agent (once per PC)",
     "pip install claudefleet-agent",
     "",
+    "# If 'claudefleet' is not recognized afterwards, pip installed it outside PATH.",
+    "# Add the printed Scripts folder to PATH, or call it by full path, e.g.:",
+    "#   $env:Path += ';C:\\Users\\<you>\\AppData\\Roaming\\Python\\Python3XX\\Scripts'",
+    "#   [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User')",
+    "# then open a new terminal.",
+    "",
     "# 2 - connect this PC (once)",
-    `claudefleet register --server ${server} --api-key ${apiKey} --display-name ${displayName}`,
+    registerArgs.join(" "),
     "",
     "# 3 - scan local transcripts and send to the dashboard",
     "claudefleet scan",
     "claudefleet sync",
+    "",
+    "# 4 - run continuously in the background (scans every 60s)",
+    "claudefleet daemon",
+    "",
+    "# --- Uninstalling this PC ---",
+    "# Stop the daemon and remove its scheduled tasks (if the one-line installer set them up):",
+    'schtasks /Delete /TN "ClaudeFleet Daemon" /F',
+    'schtasks /Delete /TN "ClaudeFleet Daemon Watchdog" /F',
+    "# Remove the agent package and its local data (never touches ~/.claude/projects):",
+    "pip uninstall claudefleet-agent -y",
+    'Remove-Item -Recurse -Force "$env:USERPROFILE\\.claude\\claudefleet" -ErrorAction SilentlyContinue',
+    'Remove-Item -Recurse -Force "$env:LOCALAPPDATA\\ClaudeFleet" -ErrorAction SilentlyContinue',
+    "# Finally, remove this PC from the dashboard's Systems list so it stops appearing there.",
   ].join("\n");
 }
 
@@ -241,30 +283,28 @@ function manualSetupBlock(server: string, apiKey: string, displayName: string): 
  * Mirrors deploy/install.ps1, but with the server URL, key, and machine name
  * already filled in so nothing has to be pasted by hand.
  *
- * Primary path: download the standalone claudefleet.exe (built by
- * .github/workflows/release-agent.yml, ~10MB, no Python/pip/git required) to
- * %LOCALAPPDATA%\ClaudeFleet\claudefleet.exe and run it directly — this is
- * what makes "paste one line" actually work on a clean Windows PC. Falls back
- * to the old pip/git path only if no release has been published yet or the
- * download fails, so this keeps working during the transition.
+ * Install path: `pip install claudefleet-agent` (published to PyPI). Falls
+ * back to installing straight from the GitHub repo only if the PyPI package
+ * is ever unavailable. Requires Python 3.10+ on PATH — the standalone exe
+ * path was dropped after repeatedly hitting antivirus/SmartScreen blocks on
+ * clean Windows PCs, which made "paste one line" unreliable in practice.
  */
 export function renderInstallScript(opts: {
   server: string;
   apiKey: string;
   displayName: string;
   repoUrl: string;
-  exeUrl: string;
   wsUrl?: string;
 }): string {
-  const { server, apiKey, displayName, repoUrl, exeUrl, wsUrl } = opts;
+  const { server, apiKey, displayName, repoUrl, wsUrl } = opts;
   // Single-quoted PowerShell literals; escape any embedded quote.
   const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
   return `# ClaudeFleet agent setup - generated for ${displayName}
-# This script installs the agent, connects this PC, and starts a persistent
-# daemon: scans every 60s (configurable) and, if enabled, streams status over
-# a WebSocket. A watchdog task checks every minute that the daemon is alive
-# and restarts it if not.
+# This script installs the agent (pip), connects this PC, and starts a
+# persistent daemon: scans every 60s (configurable) and, if enabled, streams
+# status over a WebSocket. A watchdog task checks every minute that the
+# daemon is alive and restarts it if not.
 
 $ErrorActionPreference = 'Stop'
 
@@ -272,10 +312,8 @@ $Server      = ${q(server)}
 $ApiKey      = ${q(apiKey)}
 $DisplayName = ${q(displayName)}
 $RepoUrl     = ${q(repoUrl)}
-$ExeUrl      = ${q(exeUrl)}
 $WsUrl       = ${q(wsUrl ?? "")}
 $InstallDir  = Join-Path $env:LOCALAPPDATA 'ClaudeFleet'
-$ExePath     = Join-Path $InstallDir 'claudefleet.exe'
 $HealthFile  = Join-Path $env:USERPROFILE '.claude\\claudefleet\\health.json'
 
 Write-Host ''
@@ -284,80 +322,60 @@ Write-Host ("  PC:     {0}" -f $DisplayName)
 Write-Host ("  Server: {0}" -f $Server)
 Write-Host ''
 
-# --- 1. get the agent --------------------------------------------------------
-# Preferred: standalone exe, no Python/pip/git needed on this PC.
-$exe = $null
-Write-Host 'Downloading the ClaudeFleet agent...'
-try {
-  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  Invoke-WebRequest -Uri $ExeUrl -OutFile $ExePath -UseBasicParsing
-  & $ExePath --version | Out-Null
-  if ($LASTEXITCODE -eq 0) { $exe = $ExePath }
-} catch {
-  Write-Host 'Standalone download unavailable - falling back to pip install...' -ForegroundColor Yellow
+# --- 1. find Python ----------------------------------------------------------
+$py = $null
+foreach ($candidate in @('python', 'py')) {
+  $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+  if ($cmd) { $py = if ($candidate -eq 'py') { @('py', '-3') } else { @('python') }; break }
+}
+if (-not $py) {
+  Write-Host 'Python 3.10+ was not found on PATH.' -ForegroundColor Red
+  Write-Host 'Install it from https://python.org (tick "Add python.exe to PATH"), then re-run this command.'
+  exit 1
 }
 
-$py = $null
-$runner = $null
-if ($exe) {
-  $runner = { param($FleetArgs) & $exe @FleetArgs }
-} else {
-  # Fallback: needs Python (and git for the source install) on PATH.
-  foreach ($candidate in @('python', 'py')) {
-    $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-    if ($cmd) { $py = if ($candidate -eq 'py') { @('py', '-3') } else { @('python') }; break }
-  }
-  if (-not $py) {
-    Write-Host 'Python 3.10+ was not found on PATH.' -ForegroundColor Red
-    Write-Host 'Install it from https://python.org (tick "Add python.exe to PATH"), then re-run this command.'
+# --- 2. install the agent -----------------------------------------------------
+Write-Host 'Installing the ClaudeFleet agent (pip)...'
+& $py[0] $py[1..($py.Length-1)] -m pip install --upgrade pip --quiet 2>&1 | Out-Null
+& $py[0] $py[1..($py.Length-1)] -m pip install --upgrade claudefleet-agent --quiet 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  Write-Host 'PyPI package unavailable - installing from source...'
+  & $py[0] $py[1..($py.Length-1)] -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Could not install the agent.' -ForegroundColor Red
     exit 1
   }
-
-  Write-Host 'Installing the ClaudeFleet agent (pip)...'
-  & $py[0] $py[1..($py.Length-1)] -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-  & $py[0] $py[1..($py.Length-1)] -m pip install claudefleet-agent --quiet 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host 'PyPI package unavailable - installing from source...'
-    & $py[0] $py[1..($py.Length-1)] -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
-    if ($LASTEXITCODE -ne 0) {
-      Write-Host 'Could not install the agent.' -ForegroundColor Red
-      exit 1
-    }
-  }
-
-  $cliCmd = Get-Command claudefleet -ErrorAction SilentlyContinue
-  if ($cliCmd) {
-    $runner = { param($FleetArgs) & claudefleet @FleetArgs }
-  } else {
-    $runner = { param($FleetArgs) & $py[0] $py[1..($py.Length-1)] -m claudefleet @FleetArgs }
-  }
 }
 
-# --- 2. register this machine ------------------------------------------------
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+$cliCmd = Get-Command claudefleet -ErrorAction SilentlyContinue
+if ($cliCmd) {
+  $runner = { param($FleetArgs) & claudefleet @FleetArgs }
+} else {
+  $runner = { param($FleetArgs) & $py[0] $py[1..($py.Length-1)] -m claudefleet @FleetArgs }
+}
+
+# --- 3. register this machine ------------------------------------------------
 Write-Host 'Connecting this PC to the dashboard...'
 $registerArgs = @('register', '--server', $Server, '--api-key', $ApiKey, '--display-name', $DisplayName)
 if ($WsUrl) { $registerArgs += @('--ws-url', $WsUrl) }
 & $runner $registerArgs
 
-# --- 3. first scan (immediate feedback; the daemon takes over from here) -----
+# --- 4. first scan (immediate feedback; the daemon takes over from here) -----
 Write-Host 'Scanning Claude Code transcripts (this may take a moment)...'
 & $runner @('scan')
 Write-Host 'Sending usage to the dashboard...'
 & $runner @('sync')
 
-# --- 4. resolve a single launch target for the daemon + watchdog -------------
+# --- 5. resolve a single launch target for the daemon + watchdog -------------
 # Start-Process needs one concrete FilePath, not the "py -3" two-token form,
-# so the fallback path resolves the interpreter to its actual executable.
-if ($exe) {
-  $launchFile = $exe
-  $launchArgs = @('daemon')
-} else {
-  $pyCmd = Get-Command $py[0] -ErrorAction SilentlyContinue
-  $launchFile = if ($pyCmd) { $pyCmd.Source } else { $py[0] }
-  $launchArgs = if ($py.Count -gt 1) { $py[1..($py.Length-1)] + @('-m', 'claudefleet', 'daemon') } else { @('-m', 'claudefleet', 'daemon') }
-}
+# so the interpreter is resolved to its actual executable.
+$pyCmd = Get-Command $py[0] -ErrorAction SilentlyContinue
+$launchFile = if ($pyCmd) { $pyCmd.Source } else { $py[0] }
+$launchArgs = if ($py.Count -gt 1) { $py[1..($py.Length-1)] + @('-m', 'claudefleet', 'daemon') } else { @('-m', 'claudefleet', 'daemon') }
 
-# --- 5. start the daemon now, and at every logon going forward ---------------
+# --- 6. start the daemon now, and at every logon going forward ---------------
 Write-Host 'Starting the ClaudeFleet daemon (scans every 60s in the background)...'
 Start-Process -FilePath $launchFile -ArgumentList $launchArgs -WindowStyle Hidden
 
@@ -376,7 +394,7 @@ if ($LASTEXITCODE -eq 0) {
   Write-Host 'Could not schedule the logon task (the daemon is still running now).' -ForegroundColor Yellow
 }
 
-# --- 6. watchdog: if the daemon dies, restart it within a minute -------------
+# --- 7. watchdog: if the daemon dies, restart it within a minute -------------
 # A standalone .ps1 (not an inline schtasks /TR command) so the quoting stays
 # simple and easy to inspect/debug independently. Built from single-quoted
 # literal lines (no interpolation, no escaping) with only the few dynamic

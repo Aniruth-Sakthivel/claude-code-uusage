@@ -334,17 +334,81 @@ export function Table({ children, caption }: { children: ReactNode; caption?: st
 export function Th({
   children,
   align = "left",
+  sortDir,
+  onSort,
 }: {
   children: ReactNode;
   align?: "left" | "right";
+  /** Present (even as `null`) to render this column as sortable. */
+  sortDir?: "asc" | "desc" | null;
+  onSort?: () => void;
 }) {
+  const sortable = onSort !== undefined;
   return (
     <th
       scope="col"
+      aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : undefined}
       className={`pb-2 text-2xs font-semibold uppercase tracking-[0.06em] text-muted ${align === "right" ? "text-right" : ""}`}
     >
-      {children}
+      {sortable ? (
+        <button
+          type="button"
+          onClick={onSort}
+          className={`inline-flex items-center gap-1 hover:text-ink-2 ${align === "right" ? "flex-row-reverse" : ""}`}
+        >
+          {children}
+          <span aria-hidden className="text-[0.6rem]">
+            {sortDir === "asc" ? "▲" : sortDir === "desc" ? "▼" : "↕"}
+          </span>
+        </button>
+      ) : (
+        children
+      )}
     </th>
+  );
+}
+
+/** Prev/next pager for client-side-paginated tables. */
+export function Pagination({
+  page,
+  pageCount,
+  total,
+  pageSize,
+  onPage,
+}: {
+  page: number;
+  pageCount: number;
+  total: number;
+  pageSize: number;
+  onPage: (page: number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  const from = page * pageSize + 1;
+  const to = Math.min(total, (page + 1) * pageSize);
+  return (
+    <div className="mt-3 flex items-center justify-between text-sm text-muted">
+      <span>
+        {from}–{to} of {total}
+      </span>
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="subtle"
+          disabled={page === 0}
+          onClick={() => onPage(page - 1)}
+        >
+          Previous
+        </Button>
+        <Button
+          size="sm"
+          variant="subtle"
+          disabled={page >= pageCount - 1}
+          onClick={() => onPage(page + 1)}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
   );
 }
 

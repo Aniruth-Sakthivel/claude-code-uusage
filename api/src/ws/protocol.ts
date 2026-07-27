@@ -68,7 +68,13 @@ export interface CommandOut {
 export interface SystemUpdatedOut {
   type: "system_updated";
   system_id: string;
-  reason: "scan_result" | "heartbeat" | "alert";
+  /**
+   * "connected" is reserved for a future direct HTTP->WS bridge — connectPc()
+   * runs in the Netlify Functions process, a different process from this WS
+   * server, so it cannot broadcast this reason today. Clients currently infer
+   * "new system" by first-sighting a system_id, not by this reason value.
+   */
+  reason: "scan_result" | "heartbeat" | "alert" | "connected";
   at: string;
 }
 

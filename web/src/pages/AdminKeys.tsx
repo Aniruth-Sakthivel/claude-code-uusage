@@ -45,6 +45,7 @@ export function AdminKeys() {
   const [keyName, setKeyName] = useState("");
   const [revealed, setRevealed] = useState<{ key: string; label: string } | null>(null);
   const [pendingRevoke, setPendingRevoke] = useState<ApiKeyRow | null>(null);
+  const [pendingRotate, setPendingRotate] = useState<ApiKeyRow | null>(null);
 
   useEffect(() => {
     document.title = "Agent API keys — ClaudeFleet";
@@ -84,8 +85,12 @@ export function AdminKeys() {
     onSuccess: (data) => {
       invalidateKeys();
       setRevealed({ key: data.api_key, label: "Key rotated — the old one no longer works" });
+      setPendingRotate(null);
     },
-    onError: (e: Error) => toast.push(e.message, "error"),
+    onError: (e: Error) => {
+      toast.push(e.message, "error");
+      setPendingRotate(null);
+    },
   });
 
   const revoke = useMutation({
@@ -225,8 +230,8 @@ export function AdminKeys() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          disabled={!k.active || rotate.isPending}
-                          onClick={() => rotate.mutate(k.id)}
+                          disabled={!k.active}
+                          onClick={() => setPendingRotate(k)}
                         >
                           Rotate
                         </Button>
@@ -257,6 +262,17 @@ export function AdminKeys() {
         busy={revoke.isPending}
         onConfirm={() => pendingRevoke && revoke.mutate(pendingRevoke.id)}
         onCancel={() => setPendingRevoke(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingRotate !== null}
+        title="Rotate this key?"
+        body="The old key stops working immediately — same blast radius as revoking it. Any PC still using the old key will fail to sync until it's given the new one."
+        confirmLabel="Rotate key"
+        destructive
+        busy={rotate.isPending}
+        onConfirm={() => pendingRotate && rotate.mutate(pendingRotate.id)}
+        onCancel={() => setPendingRotate(null)}
       />
     </div>
   );

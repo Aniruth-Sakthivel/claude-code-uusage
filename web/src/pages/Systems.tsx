@@ -15,7 +15,9 @@ import {
   EmptyState,
   ErrorState,
   Eyebrow,
+  Input,
   LoadingState,
+  Pagination,
   StatusPill,
   Table,
   Td,
@@ -23,6 +25,7 @@ import {
   useToast,
 } from "../components/ui";
 import { fmtRelative, fmtTokens } from "../lib/format";
+import { useTableControls } from "../lib/useTableControls";
 
 export function Systems() {
   const qc = useQueryClient();
@@ -55,6 +58,16 @@ export function Systems() {
     document.title = "Systems — ClaudeFleet";
   }, []);
 
+  const table = useTableControls(q.data, {
+    searchText: (s) => `${s.display_name} ${s.hostname ?? ""} ${s.owner ?? ""}`,
+    sorters: {
+      name: (a, b) => a.display_name.localeCompare(b.display_name),
+      status: (a, b) => Number(a.status === "online") - Number(b.status === "online"),
+      tracked: (a, b) => a.total_tokens - b.total_tokens,
+      projects: (a, b) => a.projects - b.projects,
+    },
+  });
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -81,21 +94,56 @@ export function Systems() {
             }
           />
         ) : (
-          <Table caption="Systems with status, owner and tracked usage">
-            <thead>
-              <tr>
-                <Th>PC</Th>
-                <Th>Status</Th>
-                <Th>Owner</Th>
-                <Th>Environment</Th>
-                <Th>Last sync</Th>
-                <Th align="right">Tracked</Th>
-                <Th align="right">Projects</Th>
-                {canManage && <Th align="right">Actions</Th>}
-              </tr>
-            </thead>
-            <tbody>
-              {q.data!.map((s) => (
+          <>
+            <div className="mb-3">
+              <Input
+                type="search"
+                placeholder="Search by name, hostname, or owner…"
+                value={table.query}
+                onChange={(e) => table.setQuery(e.target.value)}
+                aria-label="Search systems"
+              />
+            </div>
+            {table.total === 0 ? (
+              <EmptyState title="No systems match your search" />
+            ) : (
+              <Table caption="Systems with status, owner and tracked usage">
+                <thead>
+                  <tr>
+                    <Th
+                      sortDir={table.sortKey === "name" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("name")}
+                    >
+                      PC
+                    </Th>
+                    <Th
+                      sortDir={table.sortKey === "status" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("status")}
+                    >
+                      Status
+                    </Th>
+                    <Th>Owner</Th>
+                    <Th>Environment</Th>
+                    <Th>Last sync</Th>
+                    <Th
+                      align="right"
+                      sortDir={table.sortKey === "tracked" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("tracked")}
+                    >
+                      Tracked
+                    </Th>
+                    <Th
+                      align="right"
+                      sortDir={table.sortKey === "projects" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("projects")}
+                    >
+                      Projects
+                    </Th>
+                    {canManage && <Th align="right">Actions</Th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.map((s) => (
                 <tr key={s.system_id}>
                   <Td>
                     <div className="font-semibold">{s.display_name}</div>
@@ -121,15 +169,25 @@ export function Systems() {
                         size="sm"
                         variant="subtle"
                         onClick={() => setPendingDelete(s)}
+                        aria-label={`Remove ${s.display_name}`}
                       >
                         Remove
                       </Button>
                     </Td>
                   )}
                 </tr>
-              ))}
-            </tbody>
-          </Table>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+            <Pagination
+              page={table.page}
+              pageCount={table.pageCount}
+              total={table.total}
+              pageSize={table.pageSize}
+              onPage={table.setPage}
+            />
+          </>
         )}
       </Card>
 

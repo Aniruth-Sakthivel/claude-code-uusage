@@ -5,8 +5,16 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 import { Brand } from "../components/Layout";
-import { Button, Card, Eyebrow } from "../components/ui";
+import { Button, Card, CodeBlock, Eyebrow } from "../components/ui";
 import { ThemeToggle } from "../lib/theme";
+
+const AGENT_INSTALL_STEPS = [
+  "# 1 - install the agent (once per PC)",
+  "pip install claudefleet-agent",
+  "",
+  "# If 'claudefleet' is not recognized afterwards, pip installed it outside PATH.",
+  "# Add the printed Scripts folder to PATH, or call it by full path.",
+].join("\n");
 
 const STEPS = [
   {
@@ -85,6 +93,34 @@ export function Landing() {
               <p className="mt-1.5 text-sm text-ink-2">{s.d}</p>
             </Card>
           ))}
+        </section>
+
+        <section className="mt-10">
+          <Card>
+            <h2 className="text-lg font-semibold">Install the agent on this PC</h2>
+            <p className="mt-1.5 max-w-2xl text-sm text-ink-2">
+              Requires Python 3.10+ (get it from{" "}
+              <a
+                href="https://python.org/downloads"
+                className="font-semibold text-accent underline underline-offset-2"
+              >
+                python.org
+              </a>
+              , ticking "Add python.exe to PATH"). You can install the agent now — connecting
+              it to your dashboard and starting the background scan happens after you sign
+              in, since that step needs your personal API key.
+            </p>
+            <div className="mt-4">
+              <CodeBlock code={AGENT_INSTALL_STEPS} label="Step 1 — install" />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Link to={user ? "/dashboard" : "/login"}>
+                <Button size="sm">
+                  {user ? "Finish connecting this PC" : "Sign in to finish connecting"}
+                </Button>
+              </Link>
+            </div>
+          </Card>
         </section>
 
         <section className="mt-10">

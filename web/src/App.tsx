@@ -5,13 +5,16 @@ import type { Capability } from "./api/types";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { Alert, Button, LoadingState, ToastProvider } from "./components/ui";
+import { RealtimeProvider } from "./context/RealtimeContext";
 import { ThemeProvider } from "./lib/theme";
 import { AdminAudit } from "./pages/AdminAudit";
 import { AdminKeys } from "./pages/AdminKeys";
 import { AdminUsers } from "./pages/AdminUsers";
 import { Connect } from "./pages/Connect";
+import { ForgotPassword } from "./pages/ForgotPassword";
 import { Landing } from "./pages/Landing";
 import { Login } from "./pages/Login";
+import { ResetPassword } from "./pages/ResetPassword";
 import { Overview } from "./pages/Overview";
 import { Projects } from "./pages/Projects";
 import { Register } from "./pages/Register";
@@ -70,11 +73,14 @@ export default function App() {
     <ThemeProvider>
       <ToastProvider>
         <AuthProvider>
+        <RealtimeProvider>
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Landing />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
 
               <Route
                 path="/welcome"
@@ -153,6 +159,7 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </BrowserRouter>
+        </RealtimeProvider>
         </AuthProvider>
       </ToastProvider>
     </ThemeProvider>

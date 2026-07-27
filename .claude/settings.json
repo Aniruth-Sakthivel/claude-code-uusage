@@ -65,7 +65,9 @@
       "Bash(git add *)",
       "Bash(git tag *)",
       "Bash(git push *)",
-      "Bash(python -c \"import claudefleet; print\\(claudefleet.__version__\\)\")"
+      "Bash(python -c \"import claudefleet; print\\(claudefleet.__version__\\)\")",
+      "Bash(grep -n '\\\\$exe\\\\|exeUrl\\\\|ExeUrl\\\\|ExePath\\\\|--- [0-9]\\\\.' /d/Github/claud-code-usage/api/src/services/onboarding.ts)",
+      "Bash(npx vite *)"
     ],
     "additionalDirectories": [
       "\\tmp",

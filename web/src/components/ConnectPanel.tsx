@@ -16,13 +16,12 @@
  */
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { fleetKeys } from "../api/queryKeys";
 import type { ConnectResponse, SystemRow } from "../api/types";
 import {
-  Alert,
   Button,
   Card,
   CardHead,
@@ -59,7 +58,6 @@ export function ConnectPanel({
   const [environment, setEnvironment] = useState("");
   const [reuseId, setReuseId] = useState<string>("");
   const [result, setResult] = useState<ConnectResponse | null>(null);
-  const [showManual, setShowManual] = useState(false);
 
   const connect = useMutation({
     mutationFn: () =>
@@ -75,6 +73,15 @@ export function ConnectPanel({
     },
     onError: (e: Error) => toast.push(e.message, "error"),
   });
+
+  // The API key is shown once and never persisted anywhere retrievable —
+  // warn before an accidental tab close/navigation loses it.
+  useEffect(() => {
+    if (!result) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [result]);
 
   if (result) {
     return (
@@ -104,60 +111,40 @@ export function ConnectPanel({
             <p className="text-sm text-muted">
               Press <kbd className="rounded border border-line px-1">Win</kbd> +{" "}
               <kbd className="rounded border border-line px-1">X</kbd>, then choose
-              Terminal or PowerShell.
+              Terminal or PowerShell. Needs{" "}
+              <a
+                href="https://python.org/downloads"
+                className="font-semibold text-accent underline underline-offset-2"
+              >
+                Python 3.10+
+              </a>{" "}
+              on PATH.
             </p>
           </li>
 
           <li>
-            <div className="mb-2 text-base font-medium">2. Paste this one line and press Enter</div>
-            <CodeBlock code={result.install_command} />
-            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              <div className="font-medium text-slate-900">What this does</div>
-              <ul className="mt-2 list-disc space-y-2 pl-5">
-                <li>Run this in <strong>PowerShell on the PC you want to track</strong>.</li>
-                <li>The website only generates the setup command and a one-time enrollment token.</li>
-                <li>The agent on that PC installs, registers with the server, scans local Claude Code transcripts, and syncs usage to the dashboard.</li>
-                <li>After setup, the agent continues scanning and syncing automatically in the background.</li>
-              </ul>
-            </div>
+            <div className="mb-2 text-base font-medium">2. Install the agent</div>
+            <CodeBlock code="pip install claudefleet-agent" label="Install" />
             <p className="mt-2 text-sm text-muted">
-              Prefer not to run a command?{" "}
-              <a
-                href={result.exe_url}
-                className="font-semibold text-accent underline underline-offset-2"
-              >
-                Download claudefleet.exe directly
-              </a>
-              , then run <code className="rounded bg-surface-2 px-1">claudefleet register</code>{" "}
-              yourself (see the manual steps below for the exact flags).
+              If <code className="rounded bg-surface-2 px-1">claudefleet</code> isn't
+              recognized afterwards, pip installed it outside PATH — add the printed
+              Scripts folder to PATH, or call it by full path.
             </p>
           </li>
-        </ol>
 
-        <div className="mt-4">
-          <Alert tone="warn" title="This link works once, for 15 minutes">
-            It carries a single-use enrollment token instead of your API key, so it is safe
-            in shell history. Generate a new one if it expires.
-          </Alert>
-        </div>
-
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={() => setShowManual((v) => !v)}
-            className="text-sm font-semibold text-accent"
-          >
-            {showManual ? "Hide" : "Prefer to run the steps yourself?"}
-          </button>
-          {showManual && (
-            <div className="mt-3">
-              <CodeBlock code={result.manual_commands} label="Manual setup" />
-              <p className="mt-2 text-sm text-muted">
-                Your API key is shown here once. Store it somewhere safe.
-              </p>
+          <li>
+            <div className="mb-2 text-base font-medium">3. Connect, then scan and sync</div>
+            <CodeBlock code={result.manual_commands} label="Register, scan & sync" />
+            <p className="mt-2 text-sm text-muted">
+              Your API key is baked into the <code className="rounded bg-surface-2 px-1">register</code>{" "}
+              command above — it doesn't expire, so store this block somewhere safe. For quick
+              copying without the rest of the block:
+            </p>
+            <div className="mt-2">
+              <CodeBlock code={result.api_key} label="API key" />
             </div>
-          )}
-        </div>
+          </li>
+        </ol>
       </Card>
     );
   }
