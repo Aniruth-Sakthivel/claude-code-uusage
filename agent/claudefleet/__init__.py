@@ -10,6 +10,8 @@ observed from real transcripts (see docs/UPSTREAM_AUDIT.md for the format).
 
 from __future__ import annotations
 
+__version__ = "0.1.2"
+
 from .cli import build_parser, main as cli_main
 from .config import AgentConfig
 from .daemon import run_daemon
@@ -23,8 +25,6 @@ from .identity import (
 from .scanner import discover_files, scan as scan_files
 from .store import Store, default_db_path
 from .sync import SyncClient, sync_store
-
-__version__ = "0.1.0"
 
 __all__ = [
     "Agent",

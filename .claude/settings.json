@@ -62,7 +62,10 @@
       "Bash(grep -n -i \"localhost\\\\|http://\\\\|url\")",
       "Bash(curl -sI \"https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/claudefleet.exe\")",
       "Bash(curl -sIL \"https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/claudefleet.exe\" -o /dev/null -w \"%{http_code} %{size_download} %{url_effective}\\\\n\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git tag *)",
+      "Bash(git push *)",
+      "Bash(python -c \"import claudefleet; print\\(claudefleet.__version__\\)\")"
     ],
     "additionalDirectories": [
       "\\tmp",
