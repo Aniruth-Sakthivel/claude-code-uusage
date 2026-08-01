@@ -1,9 +1,9 @@
 import asyncio
 
-import claudefleet.daemon as daemon_mod
-from claudefleet.config import AgentConfig
-from claudefleet.daemon import Daemon
-from claudefleet.identity import Identity
+import meterhouse.daemon as daemon_mod
+from meterhouse.config import AgentConfig
+from meterhouse.daemon import Daemon
+from meterhouse.identity import Identity
 
 
 def make_identity(tmp_path) -> Identity:
@@ -78,7 +78,7 @@ def test_sync_skipped_without_server_config(tmp_path, monkeypatch):
     def fail_if_called(*a, **k):
         raise AssertionError("sync should not run without central-mode config")
 
-    import claudefleet.sync as sync_mod
+    import meterhouse.sync as sync_mod
     monkeypatch.setattr(sync_mod, "sync_store", fail_if_called)
 
     asyncio.run(d._sync_once())  # should return silently, not raise

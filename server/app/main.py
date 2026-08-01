@@ -1,4 +1,4 @@
-"""ClaudeFleet central API — application entrypoint."""
+"""Meterhouse central API — application entrypoint."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ClaudeFleet API", version=__version__, lifespan=lifespan)
+app = FastAPI(title="Meterhouse API", version=__version__, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,4 +44,4 @@ for r in (auth.router, systems.router, usage.router, dashboard.router, admin.rou
 
 @app.get("/api/v1/health", tags=["meta"])
 def health():
-    return {"status": "ok", "service": "claudefleet", "version": __version__}
+    return {"status": "ok", "service": "meterhouse", "version": __version__}

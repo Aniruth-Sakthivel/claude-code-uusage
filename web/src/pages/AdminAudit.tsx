@@ -36,7 +36,7 @@ export function AdminAudit() {
   const q = useQuery({ queryKey: qk.audit, queryFn: () => api.get<AuditRow[]>("/admin/audit") });
 
   useEffect(() => {
-    document.title = "Audit log — ClaudeFleet";
+    document.title = "Audit log — Meterhouse";
   }, []);
 
   const table = useTableControls(q.data, {
@@ -46,6 +46,7 @@ export function AdminAudit() {
       action: (a, b) => a.action.localeCompare(b.action),
       actor: (a, b) => a.actor_email.localeCompare(b.actor_email),
     },
+    descFirst: ["when"],
     initialSortKey: "when",
     initialSortDir: "desc",
   });

@@ -55,7 +55,7 @@ export function Systems() {
   });
 
   useEffect(() => {
-    document.title = "Systems — ClaudeFleet";
+    document.title = "Systems — Meterhouse";
   }, []);
 
   const table = useTableControls(q.data, {
@@ -65,7 +65,14 @@ export function Systems() {
       status: (a, b) => Number(a.status === "online") - Number(b.status === "online"),
       tracked: (a, b) => a.total_tokens - b.total_tokens,
       projects: (a, b) => a.projects - b.projects,
+      // Never-synced machines sort as epoch 0, so they land at the bottom of
+      // the default (most-recent-first) view rather than the top.
+      sync: (a, b) =>
+        new Date(a.last_sync_at ?? 0).getTime() - new Date(b.last_sync_at ?? 0).getTime(),
     },
+    descFirst: ["tracked", "projects", "sync", "status"],
+    initialSortKey: "sync",
+    initialSortDir: "desc",
   });
 
   return (
@@ -124,7 +131,12 @@ export function Systems() {
                     </Th>
                     <Th>Owner</Th>
                     <Th>Environment</Th>
-                    <Th>Last sync</Th>
+                    <Th
+                      sortDir={table.sortKey === "sync" ? table.sortDir : null}
+                      onSort={() => table.toggleSort("sync")}
+                    >
+                      Last sync
+                    </Th>
                     <Th
                       align="right"
                       sortDir={table.sortKey === "tracked" ? table.sortDir : null}

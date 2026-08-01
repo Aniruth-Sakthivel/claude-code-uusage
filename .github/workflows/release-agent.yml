@@ -1,6 +1,6 @@
 name: Release agent exe
 
-# Builds a standalone Windows claudefleet.exe (via PyInstaller) and attaches it
+# Builds a standalone Windows meterhouse.exe (via PyInstaller) and attaches it
 # to a GitHub Release whenever a tag matching agent-v* is pushed. The exe needs
 # no Python/pip/git on the end user's PC — it's what the generated install
 # command in onboarding.ts downloads and runs directly.
@@ -33,13 +33,13 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install --upgrade pip pyinstaller
 
-      - name: Build claudefleet.exe
+      - name: Build meterhouse.exe
         run: >
-          python -m PyInstaller --onefile --name claudefleet --console --clean
+          python -m PyInstaller --onefile --name meterhouse --console --clean
           --distpath dist --workpath build --specpath . entry.py
 
       - name: Smoke test
-        run: .\dist\claudefleet.exe --version
+        run: .\dist\meterhouse.exe --version
 
       - name: Run test suite against the source (not the exe)
         run: |
@@ -49,5 +49,5 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: agent/dist/claudefleet.exe
+          files: agent/dist/meterhouse.exe
           fail_on_unmatched_files: true

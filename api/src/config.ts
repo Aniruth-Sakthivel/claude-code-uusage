@@ -2,7 +2,7 @@
  * Environment configuration, validated once at boot.
  *
  * Fails fast with a readable message rather than surfacing `undefined` deep
- * inside a request handler. Accepts both `CLAUDEFLEET_`-prefixed names (what
+ * inside a request handler. Accepts both `METERHOUSE_`-prefixed names (what
  * the Python server used) and bare names (what Netlify UI encourages), so an
  * existing .env keeps working.
  */
@@ -44,7 +44,7 @@ const schema = z.object({
     .string()
     .default("https://github.com/Aniruth-Sakthivel/claude-code-uusage.git"),
   /**
-   * Direct download URL for the standalone claudefleet.exe (built by
+   * Direct download URL for the standalone meterhouse.exe (built by
    * .github/workflows/release-agent.yml). Overrides the URL derived from
    * AGENT_REPO_URL — set this if the exe is hosted somewhere other than that
    * repo's GitHub Releases.
@@ -64,20 +64,20 @@ const schema = z.object({
 });
 
 const parsed = schema.safeParse({
-  DATABASE_URL: pick("DATABASE_URL", "CLAUDEFLEET_DATABASE_URL"),
+  DATABASE_URL: pick("DATABASE_URL", "METERHOUSE_DATABASE_URL"),
   DIRECT_URL: pick("DIRECT_URL"),
-  SUPABASE_URL: pick("SUPABASE_URL", "CLAUDEFLEET_SUPABASE_URL"),
-  SUPABASE_ANON_KEY: pick("SUPABASE_ANON_KEY", "CLAUDEFLEET_SUPABASE_ANON_KEY"),
+  SUPABASE_URL: pick("SUPABASE_URL", "METERHOUSE_SUPABASE_URL"),
+  SUPABASE_ANON_KEY: pick("SUPABASE_ANON_KEY", "METERHOUSE_SUPABASE_ANON_KEY"),
   SUPABASE_SERVICE_ROLE_KEY: pick(
     "SUPABASE_SERVICE_ROLE_KEY",
-    "CLAUDEFLEET_SUPABASE_SERVICE_ROLE_KEY",
+    "METERHOUSE_SUPABASE_SERVICE_ROLE_KEY",
   ),
   PORT: pick("PORT"),
   NODE_ENV: pick("NODE_ENV"),
   PUBLIC_URL: pick("PUBLIC_URL", "URL", "DEPLOY_PRIME_URL"), // Netlify sets URL
   AGENT_REPO_URL: pick("AGENT_REPO_URL"),
   AGENT_EXE_URL: pick("AGENT_EXE_URL"),
-  CORS_ORIGINS: pick("CORS_ORIGINS", "CLAUDEFLEET_CORS_ORIGINS"),
+  CORS_ORIGINS: pick("CORS_ORIGINS", "METERHOUSE_CORS_ORIGINS"),
   WS_PORT: pick("WS_PORT"),
   PUBLIC_WS_URL: pick("PUBLIC_WS_URL"),
 });
@@ -114,7 +114,7 @@ checkPoolerPort(raw.DATABASE_URL);
  */
 function deriveExeUrl(repoUrl: string): string {
   const repoPage = repoUrl.replace(/\.git$/, "");
-  return `${repoPage}/releases/latest/download/claudefleet.exe`;
+  return `${repoPage}/releases/latest/download/meterhouse.exe`;
 }
 
 export const config = {

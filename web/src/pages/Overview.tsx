@@ -34,10 +34,12 @@ const RANGES = [
 const REFRESH_MS = 60_000;
 
 export function Overview() {
-  const [range, setRange] = useState<string>("7d");
+  // Today first: the dashboard's job is "what is happening right now", so it
+  // opens on today's reading and widens on request.
+  const [range, setRange] = useState<string>("today");
 
   useEffect(() => {
-    document.title = "Aurelia — Private operations";
+    document.title = "Overview — Meterhouse";
   }, []);
 
   const summary = useQuery({
@@ -86,7 +88,7 @@ export function Overview() {
 
   return (
     <div className="flex flex-col gap-5">
-      <Card className="overflow-hidden border-accent/15 bg-[linear-gradient(135deg,rgba(255,255,255,0.95),rgba(244,242,238,0.95))] p-7">
+      <Card className="overflow-hidden border-accent/15 bg-[linear-gradient(135deg,var(--surface),var(--surface-2))] p-7">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
             <Eyebrow>Private operations</Eyebrow>

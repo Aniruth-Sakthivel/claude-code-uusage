@@ -22,7 +22,7 @@ async function main() {
 
   const line = "=".repeat(60);
   console.log(`\n${line}`);
-  console.log("  ClaudeFleet API");
+  console.log("  Meterhouse API");
   console.log(line);
   console.log(`  URL:      http://${host}:${config.PORT}`);
   console.log(`  Health:   http://${host}:${config.PORT}/api/v1/health`);

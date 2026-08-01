@@ -19,7 +19,7 @@ def get_admin_client() -> Client:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise RuntimeError(
-            "CLAUDEFLEET_SUPABASE_URL / CLAUDEFLEET_SUPABASE_SERVICE_ROLE_KEY "
+            "METERHOUSE_SUPABASE_URL / METERHOUSE_SUPABASE_SERVICE_ROLE_KEY "
             "must be set to manage users.")
     return create_client(settings.supabase_url, settings.supabase_service_role_key)
 

@@ -8,6 +8,27 @@
       "when": 1784969350168,
       "tag": "0000_talented_kid_colt",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785565871611,
+      "tag": "0001_sweet_skrulls",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785567421351,
+      "tag": "0002_happy_longshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785567850404,
+      "tag": "0003_soft_wilson_fisk",
+      "breakpoints": true
     }
   ]
 }

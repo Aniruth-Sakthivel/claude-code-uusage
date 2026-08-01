@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Bell, Building2, ChevronRight, Compass, Cpu, FolderKanban, LayoutGrid, Menu, MonitorPlay, Search, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { Bell, Building2, ChevronRight, Compass, Cpu, FolderKanban, KeyRound, LayoutGrid, Menu, MonitorPlay, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 
 import { useAuth } from "../auth/AuthContext";
 import type { Capability } from "../api/types";
@@ -17,16 +17,21 @@ interface NavItem {
 const MONITOR: NavItem[] = [
   { to: "/dashboard", label: "Overview", end: true, icon: LayoutGrid },
   { to: "/systems", label: "Systems", icon: Cpu },
+  { to: "/accounts", label: "Claude accounts", cap: "view_all", icon: KeyRound },
   { to: "/projects", label: "Projects", icon: FolderKanban },
   { to: "/sessions", label: "Sessions", icon: MonitorPlay },
 ];
 
-const SETUP: NavItem[] = [{ to: "/connect", label: "Connect a PC", icon: Building2 }];
+const SETUP: NavItem[] = [
+  { to: "/connect", label: "Connect a PC", icon: Building2 },
+  { to: "/settings", label: "Settings", icon: Settings2 },
+];
 
 const ADMIN: NavItem[] = [
   { to: "/admin/users", label: "Users & roles", cap: "manage_users", icon: UserRound },
   { to: "/admin/keys", label: "Agent API keys", cap: "manage_keys", icon: ShieldCheck },
   { to: "/admin/audit", label: "Audit log", cap: "view_audit", icon: Compass },
+  { to: "/admin/settings", label: "Fleet settings", cap: "manage_users", icon: SlidersHorizontal },
 ];
 
 export function Brand({ compact = false }: { compact?: boolean }) {
@@ -37,7 +42,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
       </div>
       {!compact && (
         <div>
-          <div className="text-[15px] font-semibold leading-tight text-ink">Aurelia</div>
+          <div className="text-[15px] font-semibold leading-tight text-ink">Meterhouse</div>
           <div className="text-2xs text-muted">Private observatory</div>
         </div>
       )}
@@ -49,9 +54,9 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
   if (items.length === 0) return null;
   return (
     <>
-      <div className="px-2 pb-1 pt-4 text-2xs font-semibold uppercase tracking-[0.16em] text-muted">
-        {title}
-      </div>
+      {/* `.faceplate` is the shared uppercase label treatment (see index.css),
+          so section headers match column headers and eyebrows elsewhere. */}
+      <div className="faceplate px-2 pb-1 pt-4 text-2xs text-muted">{title}</div>
       {items.map((n) => {
         const Icon = n.icon ?? LayoutGrid;
         return (
@@ -83,7 +88,11 @@ export function Layout({ children }: { children: ReactNode }) {
 
   useEffect(() => setNavOpen(false), [location.pathname]);
 
-  const adminItems = ADMIN.filter((i) => !i.cap || can(i.cap));
+  // Every section honours `cap` — a nav link the user would only be
+  // redirected away from is worse than no link at all.
+  const visible = (items: NavItem[]) => items.filter((i) => !i.cap || can(i.cap));
+  const monitorItems = visible(MONITOR);
+  const adminItems = visible(ADMIN);
 
   const sidebar = (
     <nav className="flex h-full flex-col p-4" aria-label="Main">
@@ -99,11 +108,18 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="mt-2 text-sm text-ink-2">Calm, precise, and beautifully composed.</div>
       </div>
 
-      <NavSection title="Monitor" items={MONITOR} />
-      <NavSection title="Setup" items={SETUP} />
-      <NavSection title="Admin" items={adminItems} />
+      {/* The nav scrolls on its own, starting above the first section label.
+          The brand above and the account card below stay pinned, so a short
+          viewport or a long admin nav can never push either out of reach.
+          `min-h-0` is required — without it a flex child refuses to shrink and
+          the overflow never engages. */}
+      <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
+        <NavSection title="Monitor" items={monitorItems} />
+        <NavSection title="Setup" items={SETUP} />
+        <NavSection title="Admin" items={adminItems} />
+      </div>
 
-      <div className="mt-auto rounded-[16px] border border-line bg-surface p-3">
+      <div className="mt-4 rounded-[16px] border border-line bg-surface p-3">
         <div className="flex items-center gap-2">
           <div className="grid h-9 w-9 place-items-center rounded-full bg-surface-2 text-ink-2">
             <UserRound className="h-4 w-4" />

@@ -66,7 +66,7 @@ export function AdminUsers() {
   const [pendingDelete, setPendingDelete] = useState<User | null>(null);
 
   useEffect(() => {
-    document.title = "Users & roles — ClaudeFleet";
+    document.title = "Users & roles — Meterhouse";
   }, []);
 
   const users = useQuery({ queryKey: qk.users, queryFn: () => api.get<User[]>("/admin/users") });

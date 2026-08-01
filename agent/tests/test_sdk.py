@@ -1,7 +1,7 @@
 import os
 import tempfile
 
-from claudefleet import Agent
+from meterhouse import Agent
 
 
 def test_agent_sdk_register_scan_sync(tmp_path, monkeypatch):

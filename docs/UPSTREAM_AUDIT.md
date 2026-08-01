@@ -1,11 +1,11 @@
 # JSONL Format Reference — audited from `phuryn/claude-usage`
 
-> **Status update:** ClaudeFleet is **original software** and does **not** reuse or
+> **Status update:** Meterhouse is **original software** and does **not** reuse or
 > depend on `phuryn/claude-usage`. That project's code was removed. This document
 > is retained as a **format reference**: a study of how Claude Code stores usage
 > data on disk (the JSONL layout, field names, dedup semantics) — knowledge that
 > describes *Claude Code's own data format*, not anyone's implementation. Our
-> scanner (`agent/claudefleet/`) was written from scratch against this format and
+> scanner (`agent/meterhouse/`) was written from scratch against this format and
 > verified independently on real transcripts.
 >
 > **Original purpose (historical):** Deep audit performed before deciding whether to

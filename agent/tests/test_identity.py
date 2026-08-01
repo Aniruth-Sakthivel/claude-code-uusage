@@ -1,4 +1,4 @@
-from claudefleet.identity import Identity, load_identity, save_identity
+from meterhouse.identity import Identity, load_identity, save_identity
 
 
 def test_identity_created_and_persisted(tmp_path):

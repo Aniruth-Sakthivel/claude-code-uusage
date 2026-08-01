@@ -3,7 +3,7 @@ export function serverUrl(): string {
   return window.location.origin;
 }
 
-export const AGENT_INSTALL = "pip install claudefleet-agent";
+export const AGENT_INSTALL = "pip install meterhouse-rotor";
 
 /** Fallback when the package is not on PyPI yet — installs from the repo (needs git). */
 export function agentInstallFromGit(repoUrl = "https://github.com/Aniruth-Sakthivel/claude-code-uusage.git"): string {
@@ -11,11 +11,11 @@ export function agentInstallFromGit(repoUrl = "https://github.com/Aniruth-Sakthi
 }
 
 export function registerCommand(server: string, apiKey: string, displayName: string): string {
-  return `claudefleet register --server ${server} --api-key ${apiKey} --display-name ${displayName}`;
+  return `meterhouse register --server ${server} --api-key ${apiKey} --display-name ${displayName}`;
 }
 
 export function scanSyncCommands(): string {
-  return "claudefleet scan\nclaudefleet sync";
+  return "meterhouse scan\nmeterhouse sync";
 }
 
 export function fullSetupBlock(opts: {
@@ -48,8 +48,8 @@ export function windowsInstallScript(opts: {
   return `irm ${url} | iex -Args "-Server ${opts.server} -ApiKey ${opts.apiKey} -Name ${opts.displayName}"`;
 }
 
-const PENDING_KEY = "claudefleet_pending_api_key";
-const PENDING_NAME = "claudefleet_pending_display_name";
+const PENDING_KEY = "meterhouse_pending_api_key";
+const PENDING_NAME = "meterhouse_pending_display_name";
 
 export function stashConnectInfo(apiKey: string, displayName?: string): void {
   sessionStorage.setItem(PENDING_KEY, apiKey);

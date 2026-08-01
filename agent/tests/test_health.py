@@ -1,4 +1,4 @@
-from claudefleet.health import HealthState
+from meterhouse.health import HealthState
 
 
 def test_record_scan_success_and_failure(tmp_path):

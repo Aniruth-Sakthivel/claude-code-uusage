@@ -24,7 +24,14 @@ export const qk = {
   roles: ["roles"] as const,
   keys: (systemId: string | null) => ["keys", systemId] as const,
   audit: ["audit"] as const,
+  accounts: ["accounts"] as const,
+  settings: ["settings"] as const,
+  preferences: ["preferences"] as const,
+  people: (range: string) => ["people", range] as const,
+  person: (id: number, range: string) => ["person", id, range] as const,
+  personSessions: (id: number, range: string, project: string, status: string, page: number) =>
+    ["person-sessions", id, range, project, status, page] as const,
 };
 
 /** Everything that changes when systems or usage data change. */
-export const fleetKeys = [qk.systems, qk.summary, qk.projects, qk.sessions];
+export const fleetKeys = [qk.systems, qk.summary, qk.projects, qk.sessions, qk.accounts];

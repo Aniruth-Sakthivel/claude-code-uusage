@@ -1,9 +1,9 @@
 {
-  "name": "claudefleet-api",
+  "name": "meterhouse-api",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "ClaudeFleet central API — Fastify + Drizzle on Supabase Postgres",
+  "description": "Meterhouse central API — Fastify + Drizzle on Supabase Postgres",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "ws-server": "tsx watch src/ws/server.ts",

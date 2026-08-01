@@ -116,7 +116,7 @@ function event(suffix, { tokens = 100, day = "2026-07-25", session = "sess-1" } 
   };
 }
 
-console.log(`\nClaudeFleet end-to-end smoke test -> ${BASE}\n`);
+console.log(`\nMeterhouse end-to-end smoke test -> ${BASE}\n`);
 
 // ── 0. reset ──────────────────────────────────────────────────────────────────
 // The "first user becomes admin" path only runs when no users exist, so wipe

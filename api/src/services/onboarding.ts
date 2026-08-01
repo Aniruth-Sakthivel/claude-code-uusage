@@ -238,7 +238,7 @@ function manualSetupBlock(
   wsUrl?: string,
 ): string {
   const registerArgs = [
-    "claudefleet register",
+    "meterhouse register",
     `--server ${server}`,
     `--api-key ${apiKey}`,
     `--display-name ${displayName}`,
@@ -247,9 +247,9 @@ function manualSetupBlock(
 
   return [
     "# 1 - install the agent (once per PC)",
-    "pip install claudefleet-agent",
+    "pip install meterhouse-rotor",
     "",
-    "# If 'claudefleet' is not recognized afterwards, pip installed it outside PATH.",
+    "# If 'meterhouse' is not recognized afterwards, pip installed it outside PATH.",
     "# Add the printed Scripts folder to PATH, or call it by full path, e.g.:",
     "#   $env:Path += ';C:\\Users\\<you>\\AppData\\Roaming\\Python\\Python3XX\\Scripts'",
     "#   [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User')",
@@ -259,20 +259,20 @@ function manualSetupBlock(
     registerArgs.join(" "),
     "",
     "# 3 - scan local transcripts and send to the dashboard",
-    "claudefleet scan",
-    "claudefleet sync",
+    "meterhouse scan",
+    "meterhouse sync",
     "",
     "# 4 - run continuously in the background (scans every 60s)",
-    "claudefleet daemon",
+    "meterhouse daemon",
     "",
     "# --- Uninstalling this PC ---",
     "# Stop the daemon and remove its scheduled tasks (if the one-line installer set them up):",
-    'schtasks /Delete /TN "ClaudeFleet Daemon" /F',
-    'schtasks /Delete /TN "ClaudeFleet Daemon Watchdog" /F',
+    'schtasks /Delete /TN "Meterhouse Daemon" /F',
+    'schtasks /Delete /TN "Meterhouse Daemon Watchdog" /F',
     "# Remove the agent package and its local data (never touches ~/.claude/projects):",
-    "pip uninstall claudefleet-agent -y",
-    'Remove-Item -Recurse -Force "$env:USERPROFILE\\.claude\\claudefleet" -ErrorAction SilentlyContinue',
-    'Remove-Item -Recurse -Force "$env:LOCALAPPDATA\\ClaudeFleet" -ErrorAction SilentlyContinue',
+    "pip uninstall meterhouse-rotor -y",
+    'Remove-Item -Recurse -Force "$env:USERPROFILE\\.claude\\meterhouse" -ErrorAction SilentlyContinue',
+    'Remove-Item -Recurse -Force "$env:LOCALAPPDATA\\Meterhouse" -ErrorAction SilentlyContinue',
     "# Finally, remove this PC from the dashboard's Systems list so it stops appearing there.",
   ].join("\n");
 }
@@ -283,7 +283,7 @@ function manualSetupBlock(
  * Mirrors deploy/install.ps1, but with the server URL, key, and machine name
  * already filled in so nothing has to be pasted by hand.
  *
- * Install path: `pip install claudefleet-agent` (published to PyPI). Falls
+ * Install path: `pip install meterhouse-rotor` (published to PyPI). Falls
  * back to installing straight from the GitHub repo only if the PyPI package
  * is ever unavailable. Requires Python 3.10+ on PATH — the standalone exe
  * path was dropped after repeatedly hitting antivirus/SmartScreen blocks on
@@ -300,7 +300,7 @@ export function renderInstallScript(opts: {
   // Single-quoted PowerShell literals; escape any embedded quote.
   const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
-  return `# ClaudeFleet agent setup - generated for ${displayName}
+  return `# Meterhouse agent setup - generated for ${displayName}
 # This script installs the agent (pip), connects this PC, and starts a
 # persistent daemon: scans every 60s (configurable) and, if enabled, streams
 # status over a WebSocket. A watchdog task checks every minute that the
@@ -313,11 +313,11 @@ $ApiKey      = ${q(apiKey)}
 $DisplayName = ${q(displayName)}
 $RepoUrl     = ${q(repoUrl)}
 $WsUrl       = ${q(wsUrl ?? "")}
-$InstallDir  = Join-Path $env:LOCALAPPDATA 'ClaudeFleet'
-$HealthFile  = Join-Path $env:USERPROFILE '.claude\\claudefleet\\health.json'
+$InstallDir  = Join-Path $env:LOCALAPPDATA 'Meterhouse'
+$HealthFile  = Join-Path $env:USERPROFILE '.claude\\meterhouse\\health.json'
 
 Write-Host ''
-Write-Host '=== ClaudeFleet setup ===' -ForegroundColor Cyan
+Write-Host '=== Meterhouse setup ===' -ForegroundColor Cyan
 Write-Host ("  PC:     {0}" -f $DisplayName)
 Write-Host ("  Server: {0}" -f $Server)
 Write-Host ''
@@ -335,9 +335,9 @@ if (-not $py) {
 }
 
 # --- 2. install the agent -----------------------------------------------------
-Write-Host 'Installing the ClaudeFleet agent (pip)...'
+Write-Host 'Installing the Meterhouse agent (pip)...'
 & $py[0] $py[1..($py.Length-1)] -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-& $py[0] $py[1..($py.Length-1)] -m pip install --upgrade claudefleet-agent --quiet 2>&1 | Out-Null
+& $py[0] $py[1..($py.Length-1)] -m pip install --upgrade meterhouse-rotor --quiet 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
   Write-Host 'PyPI package unavailable - installing from source...'
   & $py[0] $py[1..($py.Length-1)] -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
@@ -349,11 +349,11 @@ if ($LASTEXITCODE -ne 0) {
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-$cliCmd = Get-Command claudefleet -ErrorAction SilentlyContinue
+$cliCmd = Get-Command meterhouse -ErrorAction SilentlyContinue
 if ($cliCmd) {
-  $runner = { param($FleetArgs) & claudefleet @FleetArgs }
+  $runner = { param($FleetArgs) & meterhouse @FleetArgs }
 } else {
-  $runner = { param($FleetArgs) & $py[0] $py[1..($py.Length-1)] -m claudefleet @FleetArgs }
+  $runner = { param($FleetArgs) & $py[0] $py[1..($py.Length-1)] -m meterhouse @FleetArgs }
 }
 
 # --- 3. register this machine ------------------------------------------------
@@ -373,10 +373,10 @@ Write-Host 'Sending usage to the dashboard...'
 # so the interpreter is resolved to its actual executable.
 $pyCmd = Get-Command $py[0] -ErrorAction SilentlyContinue
 $launchFile = if ($pyCmd) { $pyCmd.Source } else { $py[0] }
-$launchArgs = if ($py.Count -gt 1) { $py[1..($py.Length-1)] + @('-m', 'claudefleet', 'daemon') } else { @('-m', 'claudefleet', 'daemon') }
+$launchArgs = if ($py.Count -gt 1) { $py[1..($py.Length-1)] + @('-m', 'meterhouse', 'daemon') } else { @('-m', 'meterhouse', 'daemon') }
 
 # --- 6. start the daemon now, and at every logon going forward ---------------
-Write-Host 'Starting the ClaudeFleet daemon (scans every 60s in the background)...'
+Write-Host 'Starting the Meterhouse daemon (scans every 60s in the background)...'
 Start-Process -FilePath $launchFile -ArgumentList $launchArgs -WindowStyle Hidden
 
 Write-Host 'Waiting briefly for the agent to start...'
@@ -384,7 +384,7 @@ Start-Sleep -Seconds 5
 Write-Host 'Checking local agent health:'
 & $runner @('health')
 
-$daemonTask = 'ClaudeFleet Daemon'
+$daemonTask = 'Meterhouse Daemon'
 $daemonAction = '"' + $launchFile + '" ' + ($launchArgs -join ' ')
 schtasks /Delete /TN $daemonTask /F 2>&1 | Out-Null
 schtasks /Create /SC ONLOGON /TN $daemonTask /TR $daemonAction /RL LIMITED /F 2>&1 | Out-Null
@@ -419,7 +419,7 @@ $watchdogLines = @(
 )
 Set-Content -Path $watchdogPath -Value $watchdogLines -Encoding UTF8
 
-$watchdogTask = 'ClaudeFleet Daemon Watchdog'
+$watchdogTask = 'Meterhouse Daemon Watchdog'
 $watchdogAction = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $watchdogPath + '"'
 schtasks /Delete /TN $watchdogTask /F 2>&1 | Out-Null
 schtasks /Create /SC MINUTE /MO 1 /TN $watchdogTask /TR $watchdogAction /RL LIMITED /F 2>&1 | Out-Null
@@ -430,8 +430,8 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host ''
-Write-Host 'Done. This PC now reports to your ClaudeFleet dashboard.' -ForegroundColor Green
-Write-Host 'Run "claudefleet health" on this PC anytime to verify the local agent status.'
+Write-Host 'Done. This PC now reports to your Meterhouse dashboard.' -ForegroundColor Green
+Write-Host 'Run "meterhouse health" on this PC anytime to verify the local agent status.'
 Write-Host ("Open {0} to see it." -f $Server)
 Write-Host ''
 `;

@@ -71,9 +71,7 @@ export function CardHead({
 
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (
-    <div className="text-2xs font-semibold uppercase tracking-[0.07em] text-muted">
-      {children}
-    </div>
+    <div className="faceplate text-2xs text-accent">{children}</div>
   );
 }
 
@@ -113,6 +111,15 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 const controlClass =
   "w-full rounded-lg border border-line bg-surface-2 px-3 py-2.5 text-base text-ink " +
   "placeholder:text-muted disabled:opacity-60";
+
+/**
+ * Shared height for single-line controls.
+ *
+ * Exported so an action button sitting beside an input can match it exactly —
+ * padding alone does not, because buttons use a smaller type size. Textarea is
+ * deliberately excluded: it must grow.
+ */
+export const CONTROL_HEIGHT = "h-11";
 
 /**
  * Labelled field wrapper. Generates the id/label association so inputs are
@@ -155,7 +162,7 @@ export function Field({
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   const { className = "", ...rest } = props;
-  return <input {...rest} className={`${controlClass} ${className}`} />;
+  return <input {...rest} className={`${controlClass} ${CONTROL_HEIGHT} ${className}`} />;
 }
 
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
@@ -166,7 +173,7 @@ export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   const { className = "", children, ...rest } = props;
   return (
-    <select {...rest} className={`${controlClass} ${className}`}>
+    <select {...rest} className={`${controlClass} ${CONTROL_HEIGHT} ${className}`}>
       {children}
     </select>
   );
@@ -323,7 +330,7 @@ export function Alert({
 export function Table({ children, caption }: { children: ReactNode; caption?: string }) {
   return (
     <div className="-mx-1 overflow-x-auto px-1">
-      <table className="w-full min-w-[520px] border-collapse text-left">
+      <table className="mh-table w-full min-w-[560px] border-collapse text-left">
         {caption && <caption className="sr-only">{caption}</caption>}
         {children}
       </table>
@@ -344,21 +351,33 @@ export function Th({
   onSort?: () => void;
 }) {
   const sortable = onSort !== undefined;
+  const active = sortDir === "asc" || sortDir === "desc";
   return (
     <th
       scope="col"
       aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : undefined}
-      className={`pb-2 text-2xs font-semibold uppercase tracking-[0.06em] text-muted ${align === "right" ? "text-right" : ""}`}
+      className={`faceplate border-b border-baseline pb-2.5 pt-1 text-2xs ${
+        active ? "text-accent" : "text-muted"
+      } ${align === "right" ? "text-right" : ""}`}
     >
       {sortable ? (
         <button
           type="button"
           onClick={onSort}
-          className={`inline-flex items-center gap-1 hover:text-ink-2 ${align === "right" ? "flex-row-reverse" : ""}`}
+          className={`inline-flex items-center gap-1.5 rounded transition-colors hover:text-ink ${
+            align === "right" ? "flex-row-reverse" : ""
+          }`}
         >
           {children}
-          <span aria-hidden className="text-[0.6rem]">
-            {sortDir === "asc" ? "▲" : sortDir === "desc" ? "▼" : "↕"}
+          {/* Inactive columns keep a dimmed caret rather than a different glyph,
+              so the header row's rhythm doesn't shift when sorting changes. */}
+          <span
+            aria-hidden
+            className={`text-[0.55rem] leading-none transition-opacity ${
+              active ? "opacity-100" : "opacity-30"
+            }`}
+          >
+            {sortDir === "asc" ? "▲" : "▼"}
           </span>
         </button>
       ) : (
@@ -423,7 +442,7 @@ export function Td({
 }) {
   return (
     <td
-      className={`border-t border-line py-2.5 text-base ${align === "right" ? "text-right" : ""} ${className}`}
+      className={`py-2.5 text-base ${align === "right" ? "text-right" : ""} ${className}`}
     >
       {children}
     </td>

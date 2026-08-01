@@ -49,7 +49,7 @@ export function Connect() {
   });
 
   useEffect(() => {
-    document.title = "Connect a PC — ClaudeFleet";
+    document.title = "Connect a PC — Meterhouse";
   }, []);
 
   // Live path: the agent's first scan/sync broadcasts a system_updated event

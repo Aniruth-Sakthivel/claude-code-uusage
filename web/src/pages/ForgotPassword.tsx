@@ -21,7 +21,7 @@ export function ForgotPassword() {
   const [sent, setSent] = useState(false);
 
   useEffect(() => {
-    document.title = "Reset password — ClaudeFleet";
+    document.title = "Reset password — Meterhouse";
   }, []);
 
   async function onSubmit(e: React.FormEvent) {

@@ -38,7 +38,7 @@ _RESERVED = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__.keys())
 
 def configure_logging(level: str = "INFO", json_output: bool = True) -> logging.Logger:
     """Idempotent: safe to call once at daemon startup."""
-    logger = logging.getLogger("claudefleet")
+    logger = logging.getLogger("meterhouse")
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
     logger.propagate = False
 
@@ -56,5 +56,5 @@ def configure_logging(level: str = "INFO", json_output: bool = True) -> logging.
     return logger
 
 
-def get_logger(name: str = "claudefleet") -> logging.Logger:
+def get_logger(name: str = "meterhouse") -> logging.Logger:
     return logging.getLogger(name)

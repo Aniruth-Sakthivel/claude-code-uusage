@@ -26,7 +26,7 @@ export function Welcome() {
   });
 
   useEffect(() => {
-    document.title = "Get started — ClaudeFleet";
+    document.title = "Get started — Meterhouse";
   }, []);
 
   const hasSystems = (systems.data?.length ?? 0) > 0;
@@ -39,7 +39,7 @@ export function Welcome() {
           Welcome{user?.full_name ? `, ${user.full_name.split(" ")[0]}` : ""}
         </h1>
         <p className="mt-1.5 max-w-2xl text-base text-muted">
-          ClaudeFleet reads the transcript files Claude Code already writes on each PC and
+          Meterhouse reads the transcript files Claude Code already writes on each PC and
           reports how many tokens each machine uses. Connect your first PC below — it
           takes one command.
         </p>

@@ -6,7 +6,7 @@ venv/
 *.egg-info/
 .pytest_cache/
 
-# PyInstaller build output (agent/entry.py -> dist/claudefleet.exe)
+# PyInstaller build output (agent/entry.py -> dist/meterhouse.exe)
 agent/build/
 agent/dist/
 agent/*.spec
@@ -15,7 +15,7 @@ agent/*.spec
 *.db
 *.db-wal
 *.db-shm
-claudefleet.db
+meterhouse.db
 
 # Node / frontend
 node_modules/

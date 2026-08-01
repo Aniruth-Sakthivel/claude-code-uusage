@@ -1,11 +1,11 @@
 name: Publish agent to PyPI
 
-# Builds the claudefleet-agent sdist/wheel and publishes to PyPI whenever a tag
+# Builds the meterhouse-rotor sdist/wheel and publishes to PyPI whenever a tag
 # matching agent-v* is pushed — the same trigger as the .exe release workflow.
 # Uses PyPI Trusted Publishing (OIDC), so no API token/secret is stored here.
 #
 # One-time setup required before this works: register this repo + workflow as
-# a "pending publisher" for the claudefleet-agent project at
+# a "pending publisher" for the meterhouse-rotor project at
 # https://pypi.org/manage/account/publishing/
 #
 # Cut a release (same tag triggers both this and release-agent.yml):

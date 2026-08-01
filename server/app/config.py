@@ -8,10 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CLAUDEFLEET_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="METERHOUSE_", env_file=".env")
 
     # Storage — SQLite by default; point at Postgres in production.
-    database_url: str = "sqlite:///./claudefleet.db"
+    database_url: str = "sqlite:///./meterhouse.db"
 
     # Supabase (Project Settings -> API). anon_key is the public/publishable
     # key (also used by the frontend); service_role_key is server-only and

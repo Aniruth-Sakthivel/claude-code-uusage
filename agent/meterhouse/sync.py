@@ -1,6 +1,6 @@
 """Central-mode sync client.
 
-Pushes locally-stored usage events to the ClaudeFleet central API. Uses only the
+Pushes locally-stored usage events to the Meterhouse central API. Uses only the
 standard library (``urllib``) so the agent needs no extra dependency even in
 central mode. Designed to be safe offline: network failures raise
 :class:`SyncError` and leave the local ``synced`` flags untouched, so the next
@@ -75,25 +75,67 @@ class SyncClient:
     def heartbeat(self) -> dict:
         return self._post("/api/v1/systems/heartbeat", {})
 
-    def push(self, events: list[dict]) -> dict:
-        return self._post("/api/v1/usage/sync", {"events": events})
+    def push(self, events: list[dict], prompts: list[dict] | None = None,
+             session_titles: list[dict] | None = None) -> dict:
+        payload: dict = {"events": events}
+        # Both are optional and independently gated; omitted entirely rather
+        # than sent empty, so an older server ignores them cleanly.
+        if prompts:
+            payload["prompts"] = prompts
+        if session_titles:
+            payload["session_titles"] = session_titles
+        return self._post("/api/v1/usage/sync", payload)
+
+    def report_account(self, payload: dict) -> dict:
+        """Report Claude account identity + rate-limit utilization.
+
+        Deliberately its own endpoint rather than a field on `push`: the
+        cadences differ (identity changes almost never, utilization every
+        scan), and a failure here must never interfere with usage sync.
+        """
+        return self._post("/api/v1/account/report", payload)
 
 
 def sync_store(store, client: SyncClient, batch_size: int = 500,
-               verbose: bool = False) -> dict:
+               verbose: bool = False, send_titles: bool = False) -> dict:
     """Push all unsynced events from a local Store. Returns cumulative counts.
 
     Marks events synced only after the server confirms the batch, so a mid-run
     failure is fully recoverable on the next call.
+
+    Prompt counts ride along unconditionally — a count carries no content.
+    Session titles ride along only when ``send_titles`` is set, because a title
+    describes what someone was working on.
     """
     totals = {"received": 0, "inserted": 0, "duplicates": 0}
+
+    # Prompts and titles are cheap and bounded; attach them to the first batch
+    # rather than opening extra round-trips.
+    prompt_rows = store.unsynced_prompt_counts(limit=batch_size)
+    prompts = [
+        {"session_id": r["session_id"], "day": r["day"], "prompt_count": r["prompt_count"]}
+        for r in prompt_rows
+    ]
+    title_rows = store.unsynced_titles(limit=batch_size) if send_titles else []
+    titles = [{"session_id": r["session_id"], "title": r["title"]} for r in title_rows]
+
     while True:
         rows = store.unsynced_events(limit=batch_size)
-        if not rows:
+        if not rows and not prompts and not titles:
             break
+
         events = [row_to_event(r) for r in rows]
-        resp = client.push(events)                     # raises SyncError if offline
+        resp = client.push(events, prompts, titles)    # raises SyncError if offline
         store.mark_synced([r["event_id"] for r in rows])
+
+        # Only clear these once the server has taken them.
+        if prompts:
+            store.mark_prompts_synced([(p["session_id"], p["day"]) for p in prompts])
+            prompts = []
+        if titles:
+            store.mark_titles_synced([t["session_id"] for t in titles])
+            titles = []
+
         for k in totals:
             totals[k] += resp.get(k, 0)
         if verbose:

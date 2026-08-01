@@ -1,5 +1,5 @@
-from claudefleet import parser
-from claudefleet.store import Store
+from meterhouse import parser
+from meterhouse.store import Store
 from tests.conftest import SYSTEM_ID, assistant_record
 
 
@@ -15,8 +15,15 @@ def test_schema_initialized(tmp_path):
     s = make_store(tmp_path)
     tables = {r["name"] for r in s.conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"meta", "scanned_files", "usage_events"} <= tables
-    assert s.get_meta("schema_version") == "1"
+    assert {
+        "meta",
+        "scanned_files",
+        "usage_events",
+        # v2 added prompt counting and session titles.
+        "prompt_events",
+        "session_titles",
+    } <= tables
+    assert s.get_meta("schema_version") == "2"
     s.close()
 
 

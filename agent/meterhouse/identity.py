@@ -20,11 +20,11 @@ from . import __version__
 
 
 def default_config_path() -> Path:
-    """Where the agent config lives (override with ``CLAUDEFLEET_CONFIG``)."""
-    env = os.environ.get("CLAUDEFLEET_CONFIG")
+    """Where the agent config lives (override with ``METERHOUSE_CONFIG``)."""
+    env = os.environ.get("METERHOUSE_CONFIG")
     if env:
         return Path(env)
-    return Path.home() / ".claude" / "claudefleet" / "agent.json"
+    return Path.home() / ".claude" / "meterhouse" / "agent.json"
 
 
 def _utc_now_iso() -> str:

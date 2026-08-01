@@ -9,9 +9,9 @@ import { ThemeToggle } from "../lib/theme";
 
 const AGENT_INSTALL_STEPS = [
   "# 1 - install the agent (once per PC)",
-  "pip install claudefleet-agent",
+  "pip install meterhouse-rotor",
   "",
-  "# If 'claudefleet' is not recognized afterwards, pip installed it outside PATH.",
+  "# If 'meterhouse' is not recognized afterwards, pip installed it outside PATH.",
   "# Add the printed Scripts folder to PATH, or call it by full path.",
 ].join("\n");
 
@@ -40,7 +40,7 @@ export function Landing() {
   const { user, loading } = useAuth();
 
   useEffect(() => {
-    document.title = "Aurelia — Private observability";
+    document.title = "Meterhouse — Private observability";
   }, []);
 
   return (
@@ -63,13 +63,13 @@ export function Landing() {
       </header>
 
       <main className="mx-auto max-w-6xl px-5 pb-20 sm:px-7 lg:px-8">
-        <section className="rounded-[32px] border border-line bg-[linear-gradient(135deg,rgba(255,255,255,0.96),rgba(244,242,238,0.95))] px-6 py-10 shadow-[var(--shadow)] sm:px-8 lg:px-10 lg:py-14">
+        <section className="rounded-[32px] border border-line bg-[linear-gradient(135deg,var(--surface),var(--surface-2))] px-6 py-10 shadow-[var(--shadow)] sm:px-8 lg:px-10 lg:py-14">
           <Eyebrow>Quiet luxury observability</Eyebrow>
           <h1 className="mt-3 max-w-3xl font-serif text-4xl font-semibold leading-[1.05] tracking-[-0.02em] text-ink sm:text-5xl">
             A refined place to understand every connected workspace.
           </h1>
           <p className="mt-4 max-w-2xl text-base text-ink-2">
-            Aurelia transforms local Claude Code usage into a calm, premium command center — elegant enough for a private studio, practical enough for a modern team.
+            Meterhouse transforms local Claude Code usage into a calm, premium command center — elegant enough for a private studio, practical enough for a modern team.
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
             <Link to={user ? "/dashboard" : "/login"}>
@@ -116,7 +116,7 @@ export function Landing() {
 
       <footer className="border-t border-line">
         <div className="mx-auto max-w-6xl px-5 py-6 text-xs text-muted sm:px-7 lg:px-8">
-          Aurelia — private observability for modern creative teams.
+          Meterhouse — private observability for modern creative teams.
         </div>
       </footer>
     </div>

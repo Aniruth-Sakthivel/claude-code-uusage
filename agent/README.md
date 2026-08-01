@@ -1,8 +1,11 @@
-# ClaudeFleet Agent — Install & Scan Guide
+# Rotor — Install & Scan Guide
 
-The agent scans Claude Code's local transcript files, stores usage in a local
-SQLite database, and (optionally) syncs it to the central server. **Scanning
-works fully offline — no server required.**
+**Rotor** is the Meterhouse metering agent: the part that sits on each machine
+and turns as work happens. It scans Claude Code's local transcript files, stores
+usage in a local SQLite database, and (optionally) syncs it to the central
+server. **Scanning works fully offline — no server required.**
+
+Installed as `meterhouse-rotor`; the command it provides is `meterhouse`.
 
 > **Tracked activity ≠ official quota.** All numbers are token counts parsed from
 > local transcripts — an estimate, not your Claude Max/Pro billing or quota.
@@ -19,7 +22,7 @@ The agent uses **only the Python standard library** — there is nothing to
 `pip install` for scanning.
 
 > For **central mode** (sending usage to the dashboard) you install the
-> `claudefleet` command from the repo, which needs **git** on `PATH` — see §7.
+> `meterhouse` command from the repo, which needs **git** on `PATH` — see §7.
 
 ---
 
@@ -28,37 +31,37 @@ The agent uses **only the Python standard library** — there is nothing to
 Clone the repository and move into the agent folder:
 
 ```powershell
-git clone <your-repo-url> claudefleet
-cd claudefleet\agent
+git clone <your-repo-url> meterhouse
+cd meterhouse\agent
 ```
 
 You can run it three ways:
 
 **A. Install from PyPI (public release)** — once published, users can install:
 ```powershell
-pip install claudefleet-agent
+pip install meterhouse-rotor
 ```
 
 **B. No install (simplest)** — run it as a module from the `agent/` folder:
 ```powershell
-python -m claudefleet --help
+python -m meterhouse --help
 ```
 
-**C. Install the `claudefleet` command locally** (so you can run it from anywhere):
+**C. Install the `meterhouse` command locally** (so you can run it from anywhere):
 ```powershell
 pip install -e .
-claudefleet --help
+meterhouse --help
 ```
 
-Both install options are equivalent for command usage; the rest of this guide uses `python -m claudefleet`.
+Both install options are equivalent for command usage; the rest of this guide uses `python -m meterhouse`.
 
-> The package is now public-ready as `claudefleet-agent`. If the package has already been published on PyPI, use the `pip install claudefleet-agent` command above.
+> The package is now public-ready as `meterhouse-rotor`. If the package has already been published on PyPI, use the `pip install meterhouse-rotor` command above.
 
 ---
 
 ## 3. Use the agent as a Python SDK
 
-The package now exposes a simple SDK interface via `claudefleet.Agent`.
+The package now exposes a simple SDK interface via `meterhouse.Agent`.
 
 ### Install the package
 
@@ -69,7 +72,7 @@ pip install -e .
 ### Example usage
 
 ```python
-from claudefleet import Agent
+from meterhouse import Agent
 
 agent = Agent(display_name="PC-01")
 agent.register(
@@ -96,8 +99,8 @@ agent.daemon()
 Give this machine a name (once), then scan:
 
 ```powershell
-python -m claudefleet identity --display-name PC-01
-python -m claudefleet scan
+python -m meterhouse identity --display-name PC-01
+python -m meterhouse scan
 ```
 
 Example output:
@@ -119,15 +122,15 @@ Run `scan` whenever you want fresh data (or schedule it — see §6).
 ## 4. View your usage
 
 ```powershell
-python -m claudefleet today     # today's tokens by model
-python -m claudefleet week      # last 7 days
-python -m claudefleet stats     # all-time totals, by model, top projects
+python -m meterhouse today     # today's tokens by model
+python -m meterhouse week      # last 7 days
+python -m meterhouse stats     # all-time totals, by model, top projects
 ```
 
 `stats` example:
 
 ```
-  ClaudeFleet - all-time tracked usage
+  Meterhouse - all-time tracked usage
   Sessions:       13
   Input tokens:   6.2M   Output tokens: 1.1M   Cache read: 280M ...
   By model:  claude-opus-4-8  ...  claude-sonnet-5 ...
@@ -141,14 +144,14 @@ python -m claudefleet stats     # all-time totals, by model, top projects
 
 | What | Default location | Override with |
 |---|---|---|
-| Usage database | `~/.claude/claudefleet/usage.db` | `CLAUDEFLEET_DB` |
-| Machine identity/config | `~/.claude/claudefleet/agent.json` | `CLAUDEFLEET_CONFIG` |
+| Usage database | `~/.claude/meterhouse/usage.db` | `METERHOUSE_DB` |
+| Machine identity/config | `~/.claude/meterhouse/agent.json` | `METERHOUSE_CONFIG` |
 | Transcripts it reads (read-only) | `~/.claude/projects/**/*.jsonl` | auto-discovered |
 
 Example with a custom DB path (PowerShell):
 ```powershell
-$env:CLAUDEFLEET_DB = "D:\data\usage.db"
-python -m claudefleet scan
+$env:METERHOUSE_DB = "D:\data\usage.db"
+python -m meterhouse scan
 ```
 
 The agent **never modifies Claude Code's files** and never stores prompts,
@@ -161,11 +164,11 @@ responses, or source code — only token counts and metadata.
 Run a scan every 15 minutes without thinking about it (one line):
 
 ```powershell
-schtasks /Create /SC MINUTE /MO 15 /TN "ClaudeFleet Scan" /TR "python -m claudefleet scan --quiet" /ST 00:00
+schtasks /Create /SC MINUTE /MO 15 /TN "Meterhouse Scan" /TR "python -m meterhouse scan --quiet" /ST 00:00
 ```
 
 If you installed via the "Connect PC" flow (§7) or `deploy/install.ps1`, the
-task is instead named **"ClaudeFleet Scan+Sync"** and also pushes data to the
+task is instead named **"Meterhouse Scan+Sync"** and also pushes data to the
 central server every 15 minutes.
 
 ### Stop the agent from scanning
@@ -173,20 +176,20 @@ central server every 15 minutes.
 Remove whichever scheduled task applies to how you installed:
 
 ```powershell
-schtasks /Delete /TN "ClaudeFleet Scan" /F         # local scan-only task
-schtasks /Delete /TN "ClaudeFleet Scan+Sync" /F    # Connect PC / install.ps1 task
+schtasks /Delete /TN "Meterhouse Scan" /F         # local scan-only task
+schtasks /Delete /TN "Meterhouse Scan+Sync" /F    # Connect PC / install.ps1 task
 ```
 
 To pause it instead of deleting it (keeps run history, easy to re-enable):
 
 ```powershell
-schtasks /Change /TN "ClaudeFleet Scan+Sync" /DISABLE
-schtasks /Change /TN "ClaudeFleet Scan+Sync" /ENABLE   # resume later
+schtasks /Change /TN "Meterhouse Scan+Sync" /DISABLE
+schtasks /Change /TN "Meterhouse Scan+Sync" /ENABLE   # resume later
 ```
 
 > `schtasks /TR` does not go through `cmd.exe`, so a raw `scan && sync`
 > command line will not chain correctly — it's run via a small
-> `claudefleet-scan-sync.cmd` wrapper batch file instead. If you set the task
+> `meterhouse-scan-sync.cmd` wrapper batch file instead. If you set the task
 > up by hand, point `/TR` at a `.cmd` wrapper rather than an inline `&&`.
 
 ---
@@ -206,10 +209,10 @@ from the browser; it only generates the install/connect command and gives you th
 server URL and API key to use.
 
 ```powershell
-pip install claudefleet-agent
-claudefleet register --server https://YOUR-API-URL --api-key cfk_... --display-name PC-01
-claudefleet scan
-claudefleet sync
+pip install meterhouse-rotor
+meterhouse register --server https://YOUR-API-URL --api-key cfk_... --display-name PC-01
+meterhouse scan
+meterhouse sync
 ```
 
 Or use the Windows installer from the repo (`deploy/install.ps1`), which does
@@ -238,7 +241,7 @@ registering alone, or running `scan` without `sync`, is not enough.
 |---|---|
 | `scan complete: new=0 ... events+=0` on first run | No transcripts found. Confirm `%USERPROFILE%\.claude\projects\` exists and you've used Claude Code. |
 | `python` not found | Install Python 3.10+ and ensure it's on `PATH` (`py -3` also works on Windows). |
-| Want a clean re-scan | Delete the usage DB (`%USERPROFILE%\.claude\claudefleet\usage.db`) and run `scan` again. |
+| Want a clean re-scan | Delete the usage DB (`%USERPROFILE%\.claude\meterhouse\usage.db`) and run `scan` again. |
 | `sync` says "Central mode not configured" | Run `register` first with `--server` and `--api-key`. |
 | `sync` fails / offline | Expected when the server is unreachable; it retries on the next run. |
 
@@ -247,13 +250,34 @@ registering alone, or running `scan` without `sync`, is not enough.
 ## Command reference
 
 ```
-python -m claudefleet scan       [--display-name NAME] [--quiet]
-python -m claudefleet today | week | stats
-python -m claudefleet identity   [--display-name NAME] [--set-display-name NAME]
-python -m claudefleet register   --server URL --api-key KEY [--display-name NAME]
-python -m claudefleet sync       [--quiet]
-python -m claudefleet heartbeat
-python -m claudefleet --version
+python -m meterhouse scan       [--display-name NAME] [--quiet]
+python -m meterhouse today | week | stats
+python -m meterhouse identity   [--display-name NAME] [--set-display-name NAME]
+python -m meterhouse register   --server URL --api-key KEY [--display-name NAME]
+python -m meterhouse sync       [--quiet]
+python -m meterhouse heartbeat
+python -m meterhouse account   [show | enable | disable]
+python -m meterhouse --version
 ```
 
-Run the test suite with `pip install pytest && python -m pytest` (33 tests).
+### Claude account reporting (optional, off by default)
+
+`account` controls whether this machine also reports which Claude
+subscription it is signed into, so an admin can see who is on which plan and
+how much of its rate limit is used.
+
+```
+python -m meterhouse account show      # print the exact payload - sends nothing
+python -m meterhouse account enable
+python -m meterhouse account disable
+```
+
+Enabled, the agent reads a fixed allowlist of fields from `~/.claude.json`:
+account UUID, email, display name, organisation, plan tier, and the cached
+rate-limit percentages. **OAuth tokens and credentials are never read**, and
+`.credentials.json` is never opened. See `meterhouse/account.py` for the
+allowlist and `tests/test_account.py` for the tests that enforce it.
+
+Equivalent env var: `METERHOUSE_ACCOUNT_REPORTING=true`.
+
+Run the test suite with `pip install pytest && python -m pytest`.

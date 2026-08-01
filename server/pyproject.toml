@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claudefleet-server"
+name = "meterhouse-server"
 version = "0.1.0"
-description = "ClaudeFleet central API — multi-user usage monitoring platform"
+description = "Meterhouse central API — multi-user usage monitoring platform"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115",

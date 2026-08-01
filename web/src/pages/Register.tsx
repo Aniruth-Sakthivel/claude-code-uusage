@@ -46,7 +46,7 @@ export function Register() {
   });
 
   useEffect(() => {
-    document.title = "Create admin account — ClaudeFleet";
+    document.title = "Create admin account — Meterhouse";
   }, []);
 
   if (!loading && user) return <Navigate to="/dashboard" replace />;

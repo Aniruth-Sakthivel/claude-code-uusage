@@ -80,10 +80,17 @@ def scan(*, system_id: str, db_path=None, project_dirs=None,
                 continue
 
             inserted = store.insert_events(result.events)
+            # Prompts and titles are stored locally on every scan; whether they
+            # are ever transmitted is a separate, opt-in decision at sync time.
+            prompts_inserted = store.insert_prompts(result.prompts)
+            store.upsert_session_titles(
+                {sid: meta["topic"] for sid, meta in result.sessions.items() if meta.get("topic")}
+            )
             store.set_scanned_file(path, mtime, result.line_count)
             store.commit()
 
             summary["events_inserted"] += inserted
+            summary["prompts_inserted"] = summary.get("prompts_inserted", 0) + prompts_inserted
             if is_new:
                 summary["new"] += 1
             else:

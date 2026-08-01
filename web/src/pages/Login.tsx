@@ -36,7 +36,7 @@ export function Login() {
   });
 
   useEffect(() => {
-    document.title = "Sign in — ClaudeFleet";
+    document.title = "Sign in — Meterhouse";
   }, []);
 
   if (!loading && user) return <Navigate to="/dashboard" replace />;

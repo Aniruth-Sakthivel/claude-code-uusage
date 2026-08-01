@@ -5,7 +5,7 @@ is untouched by this module) because these are operational knobs an operator
 tunes per-deployment: scan cadence, WebSocket endpoint, retry/backoff limits,
 timeouts, and log level. Three layers, later wins:
 
-    built-in defaults  <  runtime.json (persisted)  <  CLAUDEFLEET_* env vars
+    built-in defaults  <  runtime.json (persisted)  <  METERHOUSE_* env vars
 
 Env vars are for one-off overrides (e.g. a systemd unit or container) without
 editing the file; the file is for anything meant to persist across runs.
@@ -20,10 +20,10 @@ from pathlib import Path
 
 
 def default_runtime_config_path() -> Path:
-    env = os.environ.get("CLAUDEFLEET_RUNTIME_CONFIG")
+    env = os.environ.get("METERHOUSE_RUNTIME_CONFIG")
     if env:
         return Path(env)
-    return Path.home() / ".claude" / "claudefleet" / "runtime.json"
+    return Path.home() / ".claude" / "meterhouse" / "runtime.json"
 
 
 @dataclass
@@ -47,6 +47,18 @@ class AgentConfig:
     # grow memory without limit; oldest events are dropped first (the next
     # full `scan` still catches anything lost, since scan state is durable).
     offline_queue_max_items: int = 5000
+    # Claude account reporting — OFF by default, and deliberately so.
+    # Turning this on widens what leaves the machine beyond token counts to
+    # include the Claude account's identity (email, org, plan tier) and the
+    # rate-limit utilization Claude Code caches. Credentials are never read.
+    # See meterhouse/account.py, and `meterhouse account show` to inspect the
+    # exact payload before enabling.
+    account_reporting_enabled: bool = False
+    # Session titles - also OFF by default and for the same reason. A title
+    # like "Migrate billing schema" describes what someone was working on,
+    # which is a step beyond the token counts the agent otherwise sends.
+    # Prompt *counts* need no flag: a number carries no content.
+    session_titles_enabled: bool = False
     # Observability
     log_level: str = "INFO"
     log_json: bool = True
@@ -54,19 +66,27 @@ class AgentConfig:
     @staticmethod
     def _env_overrides() -> dict:
         mapping = {
-            "CLAUDEFLEET_SCAN_INTERVAL": ("scan_interval_seconds", int),
-            "CLAUDEFLEET_WS_ENABLED": ("ws_enabled", lambda v: v.lower() in ("1", "true", "yes")),
-            "CLAUDEFLEET_WS_URL": ("ws_url", str),
-            "CLAUDEFLEET_WS_CONNECT_TIMEOUT": ("ws_connect_timeout_seconds", float),
-            "CLAUDEFLEET_WS_HEARTBEAT_INTERVAL": ("ws_heartbeat_interval_seconds", float),
-            "CLAUDEFLEET_WS_HEARTBEAT_TIMEOUT": ("ws_heartbeat_timeout_seconds", float),
-            "CLAUDEFLEET_RETRY_MAX_ATTEMPTS": ("retry_max_attempts", int),
-            "CLAUDEFLEET_RETRY_BACKOFF_BASE": ("retry_backoff_base_seconds", float),
-            "CLAUDEFLEET_RETRY_BACKOFF_MAX": ("retry_backoff_max_seconds", float),
-            "CLAUDEFLEET_HTTP_TIMEOUT": ("http_timeout_seconds", float),
-            "CLAUDEFLEET_OFFLINE_QUEUE_MAX": ("offline_queue_max_items", int),
-            "CLAUDEFLEET_LOG_LEVEL": ("log_level", str),
-            "CLAUDEFLEET_LOG_JSON": ("log_json", lambda v: v.lower() in ("1", "true", "yes")),
+            "METERHOUSE_SCAN_INTERVAL": ("scan_interval_seconds", int),
+            "METERHOUSE_WS_ENABLED": ("ws_enabled", lambda v: v.lower() in ("1", "true", "yes")),
+            "METERHOUSE_WS_URL": ("ws_url", str),
+            "METERHOUSE_WS_CONNECT_TIMEOUT": ("ws_connect_timeout_seconds", float),
+            "METERHOUSE_WS_HEARTBEAT_INTERVAL": ("ws_heartbeat_interval_seconds", float),
+            "METERHOUSE_WS_HEARTBEAT_TIMEOUT": ("ws_heartbeat_timeout_seconds", float),
+            "METERHOUSE_RETRY_MAX_ATTEMPTS": ("retry_max_attempts", int),
+            "METERHOUSE_RETRY_BACKOFF_BASE": ("retry_backoff_base_seconds", float),
+            "METERHOUSE_RETRY_BACKOFF_MAX": ("retry_backoff_max_seconds", float),
+            "METERHOUSE_HTTP_TIMEOUT": ("http_timeout_seconds", float),
+            "METERHOUSE_OFFLINE_QUEUE_MAX": ("offline_queue_max_items", int),
+            "METERHOUSE_ACCOUNT_REPORTING": (
+                "account_reporting_enabled",
+                lambda v: v.lower() in ("1", "true", "yes"),
+            ),
+            "METERHOUSE_SESSION_TITLES": (
+                "session_titles_enabled",
+                lambda v: v.lower() in ("1", "true", "yes"),
+            ),
+            "METERHOUSE_LOG_LEVEL": ("log_level", str),
+            "METERHOUSE_LOG_JSON": ("log_json", lambda v: v.lower() in ("1", "true", "yes")),
         }
         out = {}
         for env_name, (field_name, caster) in mapping.items():

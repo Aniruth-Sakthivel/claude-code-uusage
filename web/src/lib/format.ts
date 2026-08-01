@@ -22,3 +22,29 @@ const SERIES = ["--pc1", "--pc2", "--pc3", "--pc4", "--pc5"];
 export function systemColor(index: number): string {
   return `var(${SERIES[index % SERIES.length]})`;
 }
+
+/** Rate-limit percentages arrive as 0-100 already, not as a fraction. */
+export function fmtPct(n: number | null): string {
+  if (n === null || Number.isNaN(n)) return "—";
+  return `${n < 10 ? n.toFixed(1) : Math.round(n)}%`;
+}
+
+export function fmtDollars(n: number | null): string {
+  if (n === null || Number.isNaN(n)) return "—";
+  return `$${n.toFixed(2)}`;
+}
+
+/**
+ * "in 41m" — how long until a rate-limit window resets. Counts forward, where
+ * fmtRelative counts backward, so the two read correctly side by side.
+ */
+export function fmtResetsIn(iso: string | null): string {
+  if (!iso) return "—";
+  const secs = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  if (secs <= 0) return "due";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `in ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `in ${hrs}h ${mins % 60}m`;
+  return `in ${Math.round(hrs / 24)}d`;
+}

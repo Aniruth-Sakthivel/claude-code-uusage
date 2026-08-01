@@ -1,7 +1,7 @@
 """Database engine, session factory, and declarative base.
 
 SQLite for dev (with the check_same_thread tweak FastAPI needs); swap
-``CLAUDEFLEET_DATABASE_URL`` for Postgres in production — nothing else changes.
+``METERHOUSE_DATABASE_URL`` for Postgres in production — nothing else changes.
 Schema is created via Alembic in production; for dev bootstrap we call
 ``Base.metadata.create_all`` on startup (see main.py).
 """

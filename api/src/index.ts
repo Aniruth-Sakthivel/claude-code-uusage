@@ -14,7 +14,10 @@ import { isAppError } from "./core/errors.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
 import { connectRoutes } from "./routes/connect.js";
+import { accountRoutes } from "./routes/accounts.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
+import { peopleRoutes } from "./routes/people.js";
+import { settingsRoutes } from "./routes/settings.js";
 import { usageRoutes } from "./routes/usage.js";
 
 export const VERSION = "1.0.0";
@@ -72,7 +75,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
     return {
       status: database === "ok" ? "ok" : "degraded",
-      service: "claudefleet",
+      service: "meterhouse",
       version: VERSION,
       database,
     };
@@ -83,6 +86,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(usageRoutes);
   await app.register(connectRoutes);
   await app.register(adminRoutes);
+  await app.register(accountRoutes);
+  await app.register(settingsRoutes);
+  await app.register(peopleRoutes);
 
   return app;
 }

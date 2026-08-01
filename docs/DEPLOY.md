@@ -1,6 +1,6 @@
 # Deployment
 
-ClaudeFleet deploys as **one Netlify site**. The dashboard is served as static
+Meterhouse deploys as **one Netlify site**. The dashboard is served as static
 files and the API runs as a serverless function on the same origin, so there is
 no second host to pay for and no CORS to configure.
 
@@ -87,7 +87,7 @@ install scripts use it so agents point at the right origin.
 
 ```bash
 curl https://your-site.netlify.app/api/v1/health
-# {"status":"ok","service":"claudefleet","version":"1.0.0","database":"ok"}
+# {"status":"ok","service":"meterhouse","version":"1.0.0","database":"ok"}
 ```
 
 A `database` value other than `ok` means `DATABASE_URL` is wrong or the pooler is
@@ -114,11 +114,11 @@ role, including developers, so onboarding does not require an admin.
 Administrators can alternatively pre-create machines and share keys from
 **Admin → Agent API keys**.
 
-Each install schedules a Windows task (`ClaudeFleet Scan+Sync`) that runs every
+Each install schedules a Windows task (`Meterhouse Scan+Sync`) that runs every
 15 minutes. To remove it:
 
 ```powershell
-schtasks /Delete /TN "ClaudeFleet Scan+Sync" /F
+schtasks /Delete /TN "Meterhouse Scan+Sync" /F
 ```
 
 ---

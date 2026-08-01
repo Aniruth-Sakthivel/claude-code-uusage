@@ -1,4 +1,4 @@
-# ClaudeFleet agent - one-command Windows setup
+# Meterhouse agent - one-command Windows setup
 #
 # Usage (replace values):
 #   irm https://YOUR-SITE/install.ps1 | iex -Args "-Server https://YOUR-SITE -ApiKey cfk_... -Name PC-01"
@@ -20,7 +20,7 @@ param(
 
     # Standalone exe (no Python/pip/git needed) - published by
     # .github/workflows/release-agent.yml. Falls back to pip/git if this 404s.
-    [string]$ExeUrl = "https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/claudefleet.exe",
+    [string]$ExeUrl = "https://github.com/Aniruth-Sakthivel/claude-code-uusage/releases/latest/download/meterhouse.exe",
 
     [switch]$SkipSchedule
 )
@@ -28,8 +28,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Get-StandaloneExe {
-    $installDir = Join-Path $env:LOCALAPPDATA "ClaudeFleet"
-    $exePath = Join-Path $installDir "claudefleet.exe"
+    $installDir = Join-Path $env:LOCALAPPDATA "Meterhouse"
+    $exePath = Join-Path $installDir "meterhouse.exe"
     try {
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
         Invoke-WebRequest -Uri $ExeUrl -OutFile $exePath -UseBasicParsing
@@ -53,9 +53,9 @@ function Find-Python {
 
 function Install-AgentViaPip {
     param([string[]]$Py)
-    Write-Host "Installing ClaudeFleet agent (pip)..."
+    Write-Host "Installing Meterhouse agent (pip)..."
     & $Py[0] $Py[1..($Py.Length-1)] -m pip install --upgrade pip --quiet
-    & $Py[0] $Py[1..($Py.Length-1)] -m pip install claudefleet-agent --quiet
+    & $Py[0] $Py[1..($Py.Length-1)] -m pip install meterhouse-rotor --quiet
     if ($LASTEXITCODE -eq 0) { return }
 
     Write-Host "PyPI package not found - installing from git..."
@@ -63,7 +63,7 @@ function Install-AgentViaPip {
     if ($LASTEXITCODE -ne 0) { throw "Could not install agent. Publish to PyPI or set -RepoUrl." }
 }
 
-Write-Host "ClaudeFleet setup for '$Name' -> $Server"
+Write-Host "Meterhouse setup for '$Name' -> $Server"
 
 Write-Host "Fetching the agent..."
 $exe = Get-StandaloneExe
@@ -73,35 +73,35 @@ if (-not $exe) {
     Install-AgentViaPip -Py $py
 }
 
-function Invoke-ClaudeFleet {
+function Invoke-Meterhouse {
     param([string[]]$FleetArgs)
     if ($exe) {
         & $exe @FleetArgs
-    } elseif (Get-Command claudefleet -ErrorAction SilentlyContinue) {
-        & claudefleet @FleetArgs
+    } elseif (Get-Command meterhouse -ErrorAction SilentlyContinue) {
+        & meterhouse @FleetArgs
     } else {
-        & $py[0] $py[1..($py.Length-1)] -m claudefleet @FleetArgs
+        & $py[0] $py[1..($py.Length-1)] -m meterhouse @FleetArgs
     }
 }
 
 Write-Host "Registering with central server..."
-Invoke-ClaudeFleet -FleetArgs @(
+Invoke-Meterhouse -FleetArgs @(
     "register", "--server", $Server.TrimEnd("/"), "--api-key", $ApiKey, "--display-name", $Name
 )
 
 Write-Host "Running first scan..."
-Invoke-ClaudeFleet -FleetArgs @("scan")
+Invoke-Meterhouse -FleetArgs @("scan")
 
 Write-Host "Syncing to dashboard..."
-Invoke-ClaudeFleet -FleetArgs @("sync")
+Invoke-Meterhouse -FleetArgs @("sync")
 
 if (-not $SkipSchedule) {
-    $taskName = "ClaudeFleet Scan+Sync"
+    $taskName = "Meterhouse Scan+Sync"
     if ($exe) {
         $inner = '"' + $exe + '" scan --quiet && "' + $exe + '" sync --quiet'
     } else {
         $pyExe = if ($py.Count -gt 1) { "py -3" } else { "python" }
-        $inner = "$pyExe -m claudefleet scan --quiet && $pyExe -m claudefleet sync --quiet"
+        $inner = "$pyExe -m meterhouse scan --quiet && $pyExe -m meterhouse sync --quiet"
     }
     # schtasks /TR does not go through cmd.exe, so "&&" must be wrapped in an
     # explicit cmd /c call - otherwise it's passed as a literal argument to the

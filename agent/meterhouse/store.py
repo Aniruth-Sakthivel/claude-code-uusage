@@ -22,14 +22,14 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def default_db_path() -> Path:
-    env = os.environ.get("CLAUDEFLEET_DB")
+    env = os.environ.get("METERHOUSE_DB")
     if env:
         return Path(env)
-    return Path.home() / ".claude" / "claudefleet" / "usage.db"
+    return Path.home() / ".claude" / "meterhouse" / "usage.db"
 
 
 def _utc_now_iso() -> str:
@@ -88,10 +88,39 @@ class Store:
             CREATE INDEX IF NOT EXISTS idx_events_session ON usage_events(session_id);
             CREATE INDEX IF NOT EXISTS idx_events_model   ON usage_events(model_family);
             CREATE INDEX IF NOT EXISTS idx_events_synced  ON usage_events(synced);
+
+            -- Human prompts (schema v2). One row per typed turn, keyed by the
+            -- transcript record's own uuid so a re-scan cannot double-count.
+            -- Deliberately not in usage_events: a prompt has no tokens, and
+            -- mixing it in would inflate event and session counts everywhere.
+            CREATE TABLE IF NOT EXISTS prompt_events (
+                prompt_id  TEXT PRIMARY KEY,
+                session_id TEXT,
+                day        TEXT,
+                synced     INTEGER DEFAULT 0,
+                created_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_prompts_day    ON prompt_events(day);
+            CREATE INDEX IF NOT EXISTS idx_prompts_synced ON prompt_events(synced);
+
+            -- Session titles (schema v2). Held locally always; transmitted
+            -- only when session_titles_enabled is switched on, because a title
+            -- can describe what someone was working on.
+            CREATE TABLE IF NOT EXISTS session_titles (
+                session_id TEXT PRIMARY KEY,
+                title      TEXT,
+                updated_at TEXT,
+                synced     INTEGER DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_titles_synced ON session_titles(synced);
             """
         )
+        # New tables are additive, so CREATE TABLE IF NOT EXISTS above is the
+        # entire migration — just record the version we are now at.
         cur = self.get_meta("schema_version")
-        if cur is None:
+        if cur is None or int(cur) < SCHEMA_VERSION:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
         self.conn.commit()
 
@@ -146,6 +175,90 @@ class Store:
             [{**e, "created_at": now} for e in events],
         )
         return self.conn.total_changes - before
+
+    # ── prompts ───────────────────────────────────────────────────────────────
+    def insert_prompts(self, prompts: list[tuple[str, str, str]]) -> int:
+        """Record human prompts as ``(prompt_id, session_id, day)`` triples.
+
+        Same idempotency trick as events: the transcript record's uuid is the
+        primary key, so re-scanning a grown file never double-counts.
+        """
+        if not prompts:
+            return 0
+        before = self.conn.total_changes
+        now = _utc_now_iso()
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO prompt_events (prompt_id, session_id, day, synced, created_at) "
+            "VALUES (?, ?, ?, 0, ?)",
+            [(pid, sid, day, now) for pid, sid, day in prompts],
+        )
+        return self.conn.total_changes - before
+
+    def unsynced_prompt_counts(self, limit: int = 500) -> list[sqlite3.Row]:
+        """Cumulative per-(session, day) counts for any day with new prompts.
+
+        Cumulative rather than incremental so the server can upsert with a
+        MAX(), which makes retries and out-of-order batches harmless.
+        """
+        return self.conn.execute(
+            """
+            SELECT session_id, day, COUNT(*) AS prompt_count
+            FROM prompt_events
+            WHERE (session_id, day) IN (
+                SELECT session_id, day FROM prompt_events WHERE synced = 0
+            )
+            GROUP BY session_id, day
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    def mark_prompts_synced(self, pairs: list[tuple[str, str]]) -> None:
+        if not pairs:
+            return
+        self.conn.executemany(
+            "UPDATE prompt_events SET synced = 1 WHERE session_id = ? AND day = ?", pairs
+        )
+        self.conn.commit()
+
+    def prompt_total(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) AS n FROM prompt_events").fetchone()
+        return int(row["n"]) if row else 0
+
+    # ── session titles ────────────────────────────────────────────────────────
+    def upsert_session_titles(self, titles: dict[str, str]) -> None:
+        """Store titles locally regardless of whether they will be sent.
+
+        A changed title resets `synced` so the update propagates.
+        """
+        if not titles:
+            return
+        now = _utc_now_iso()
+        self.conn.executemany(
+            """
+            INSERT INTO session_titles (session_id, title, updated_at, synced)
+            VALUES (?, ?, ?, 0)
+            ON CONFLICT(session_id) DO UPDATE SET
+                title = excluded.title,
+                updated_at = excluded.updated_at,
+                synced = CASE WHEN session_titles.title IS excluded.title THEN session_titles.synced ELSE 0 END
+            """,
+            [(sid, title, now) for sid, title in titles.items() if title],
+        )
+
+    def unsynced_titles(self, limit: int = 500) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT session_id, title FROM session_titles WHERE synced = 0 LIMIT ?", (limit,)
+        ).fetchall()
+
+    def mark_titles_synced(self, session_ids: list[str]) -> None:
+        if not session_ids:
+            return
+        self.conn.executemany(
+            "UPDATE session_titles SET synced = 1 WHERE session_id = ?",
+            [(sid,) for sid in session_ids],
+        )
+        self.conn.commit()
 
     def commit(self) -> None:
         self.conn.commit()

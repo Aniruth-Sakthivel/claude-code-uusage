@@ -1,16 +1,16 @@
-"""ClaudeFleet agent CLI (local mode).
+"""Meterhouse agent CLI (local mode).
 
-    python -m claudefleet scan       # ingest new/changed transcripts
-    python -m claudefleet today      # today's usage by model
-    python -m claudefleet week       # last 7 days
-    python -m claudefleet stats      # all-time statistics
-    python -m claudefleet identity   # show this machine's system_id
+    python -m meterhouse scan       # ingest new/changed transcripts
+    python -m meterhouse today      # today's usage by model
+    python -m meterhouse week       # last 7 days
+    python -m meterhouse stats      # all-time statistics
+    python -m meterhouse identity   # show this machine's system_id
 
 Local mode needs no central server. Central-mode commands (register/sync/
 heartbeat) push usage to a central dashboard; see `--help` for each.
 
 `daemon` runs continuously: scans on a timer (default 60s, configurable via
-runtime.json or CLAUDEFLEET_* env vars) and, if configured, holds a WebSocket
+runtime.json or METERHOUSE_* env vars) and, if configured, holds a WebSocket
 open for real-time status push. `health` reports the daemon's last-known
 state.
 """
@@ -18,9 +18,12 @@ state.
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import date
 
 from . import __version__
+from .account import collect_account_report
+from .config import AgentConfig
 from .identity import load_identity, save_identity
 from .pricing import calc_cost, fmt_cost, fmt_tokens
 from .reports import all_time_stats, cost_of, last_n_days, totals_for_day
@@ -101,7 +104,7 @@ def cmd_stats(args):
         t = s["totals"]
         print()
         _hr("=")
-        print("  ClaudeFleet - all-time tracked usage")
+        print("  Meterhouse - all-time tracked usage")
         _hr("=")
         print(f"  Sessions:       {t['sessions'] or 0:,}")
         print(f"  Events:         {fmt_tokens(t['events'] or 0)}")
@@ -158,7 +161,7 @@ def cmd_heartbeat(args):
     from .sync import SyncClient, SyncError
     ident = load_identity()
     if not ident.server_url or not ident.api_key:
-        print("Central mode not configured. Run: claudefleet register ...")
+        print("Central mode not configured. Run: meterhouse register ...")
         return
     try:
         SyncClient(ident.server_url, ident.api_key).heartbeat()
@@ -171,13 +174,14 @@ def cmd_sync(args):
     from .sync import SyncClient, SyncError, sync_store
     ident = load_identity()
     if not ident.server_url or not ident.api_key:
-        print("Central mode not configured. Run: claudefleet register "
+        print("Central mode not configured. Run: meterhouse register "
               "--server URL --api-key KEY")
         return
     store = Store(args.db or default_db_path())
     try:
         client = SyncClient(ident.server_url, ident.api_key)
-        totals = sync_store(store, client, verbose=not args.quiet)
+        totals = sync_store(store, client, verbose=not args.quiet,
+                            send_titles=AgentConfig.load().session_titles_enabled)
         print(f"Sync complete: inserted={totals['inserted']} "
               f"duplicates={totals['duplicates']} (sent={totals['received']}).")
     except SyncError as e:
@@ -195,11 +199,11 @@ def cmd_health(args):
     from .health import HealthState
     state = HealthState.load()
     if state is None:
-        print("No daemon health data yet — is `claudefleet daemon` running?")
+        print("No daemon health data yet — is `meterhouse daemon` running?")
         return
     print()
     _hr()
-    print("  ClaudeFleet daemon health")
+    print("  Meterhouse daemon health")
     _hr()
     print(f"  PID:                 {state.pid}")
     print(f"  Started:             {state.started_at}")
@@ -231,9 +235,46 @@ def cmd_identity(args):
     print()
 
 
+def cmd_account(args):
+    """Inspect or toggle Claude account reporting.
+
+    `show` exists so nobody has to take the privacy claim on trust: it prints
+    the exact payload that would be transmitted, without transmitting it.
+    """
+    cfg = AgentConfig.load()
+
+    if args.action in ("enable", "disable"):
+        cfg.account_reporting_enabled = args.action == "enable"
+        cfg.save()
+        state = "ENABLED" if cfg.account_reporting_enabled else "DISABLED"
+        print(f"\n  Claude account reporting is now {state}.\n")
+        if not cfg.account_reporting_enabled:
+            return
+        print("  Run `meterhouse account show` to see exactly what will be sent.\n")
+        return
+
+    # show — read with reporting forced on, so the payload is visible even
+    # while the feature is switched off.
+    report = collect_account_report(enabled=True)
+    print()
+    if cfg.account_reporting_enabled:
+        print("  Reporting is ENABLED - the payload below is sent on each scan.")
+    else:
+        print("  Reporting is DISABLED - nothing is sent. Preview only.")
+    _hr()
+    if report is None:
+        print("  No Claude account found in ~/.claude.json.")
+        print("  (Sign in to Claude Code, or set METERHOUSE_CLAUDE_JSON.)")
+    else:
+        print(json.dumps(report, indent=2))
+    _hr()
+    print("  Credentials and OAuth tokens are never read. See meterhouse/account.py.")
+    print()
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="claudefleet",
-                                description="ClaudeFleet local usage agent")
+    p = argparse.ArgumentParser(prog="meterhouse",
+                                description="Meterhouse local usage agent")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--db", default=None, help="override local DB path")
     sub = p.add_subparsers(dest="command", required=True)
@@ -262,6 +303,19 @@ def build_parser() -> argparse.ArgumentParser:
     sy = sub.add_parser("sync", help="push unsynced usage to the central server")
     sy.add_argument("--quiet", action="store_true")
     sy.set_defaults(func=cmd_sync)
+
+    ac = sub.add_parser(
+        "account",
+        help="inspect or toggle Claude account reporting (off by default)",
+    )
+    ac.add_argument(
+        "action",
+        nargs="?",
+        default="show",
+        choices=["show", "enable", "disable"],
+        help="show the exact payload that would be sent, or turn reporting on/off",
+    )
+    ac.set_defaults(func=cmd_account)
 
     idp = sub.add_parser("identity", help="show/update this machine's identity")
     idp.add_argument("--display-name", default=None)

@@ -1,4 +1,4 @@
-# Running ClaudeFleet
+# Running Meterhouse
 
 Three components: the **central server** (FastAPI), the **web dashboard** (React),
 and the **agent** on each PC. Local-only usage needs just the agent.
@@ -21,7 +21,7 @@ python run.py
   **first admin account from the web app** (`/register`), which is open only
   until the first user exists.
 - Interactive API docs: `http://localhost:8000/docs`
-- Config (all env, prefix `CLAUDEFLEET_`): `DATABASE_URL`, `JWT_SECRET`,
+- Config (all env, prefix `METERHOUSE_`): `DATABASE_URL`, `JWT_SECRET`,
   `ACCESS_TOKEN_EXPIRE_MINUTES`, `CORS_ORIGINS`.
 - Tests: `pytest` (12 tests incl. RBAC scoping).
 
@@ -50,24 +50,24 @@ any static host / the FastAPI app).
 ```bash
 cd agent
 # local mode (no server needed):
-python -m claudefleet scan
-python -m claudefleet today | week | stats
+python -m meterhouse scan
+python -m meterhouse today | week | stats
 
 # central mode — register once with the key from the dashboard:
-python -m claudefleet register --server http://SERVER:8000 --api-key cfk_... --display-name PC-01
-python -m claudefleet scan       # ingest transcripts locally
-python -m claudefleet sync        # push new events to the server
-python -m claudefleet heartbeat   # liveness ping
+python -m meterhouse register --server http://SERVER:8000 --api-key cfk_... --display-name PC-01
+python -m meterhouse scan       # ingest transcripts locally
+python -m meterhouse sync        # push new events to the server
+python -m meterhouse heartbeat   # liveness ping
 ```
 
-Local overrides: `CLAUDEFLEET_DB` (local DB path), `CLAUDEFLEET_CONFIG` (identity/config path).
+Local overrides: `METERHOUSE_DB` (local DB path), `METERHOUSE_CONFIG` (identity/config path).
 
 ## End-to-end smoke test (one machine)
 
 1. Start the server (port 8000).
 2. `npm run dev`, create the admin account, then enroll a system and copy the key.
-3. `claudefleet register --server http://127.0.0.1:8000 --api-key <key> --display-name PC-01`
-4. `claudefleet scan && claudefleet sync`
+3. `meterhouse register --server http://127.0.0.1:8000 --api-key <key> --display-name PC-01`
+4. `meterhouse scan && meterhouse sync`
 5. Watch the dashboard populate. Re-running `sync` inserts 0 (idempotent).
 
 ## Verified so far

@@ -36,8 +36,8 @@ def test_provision_closes_after_bootstrap(client, admin_token):
 
 def test_bootstrap_admin_login(client):
     import os
-    tok = supabase_sign_in(os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL"],
-                           os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD"])
+    tok = supabase_sign_in(os.environ["METERHOUSE_BOOTSTRAP_ADMIN_EMAIL"],
+                           os.environ["METERHOUSE_BOOTSTRAP_ADMIN_PASSWORD"])
     r = client.get("/api/v1/auth/me", headers=auth_header(tok))
     assert r.status_code == 200 and r.json()["role"] == "admin"
 

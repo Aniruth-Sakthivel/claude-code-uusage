@@ -1,49 +1,75 @@
 @import "tailwindcss";
 
+/**
+ * Palette — "instrument panel". Cool slate concrete with a verdigris-teal
+ * readout accent and a signal amber for load. Teal carries "reading is live",
+ * amber "approaching heavy", red "over". Every colour is a variable so the
+ * whole theme swaps from this block alone.
+ */
 :root {
-  --plane: #f7f6f3;
+  --plane: #eef1f4;
   --surface: #ffffff;
-  --surface-2: #f4f2ee;
-  --ink: #1b1b1b;
-  --ink-2: #6f6f6f;
-  --muted: #8b857d;
-  --grid: #ece7de;
-  --baseline: #d8d0c5;
-  --border: #e8e4dd;
-  --accent: #b28b52;
-  --accent-weak: rgba(178, 139, 82, 0.14);
-  --good: #3e8e5b;
-  --warn: #d4a44a;
-  --critical: #b74d4d;
-  --critical-weak: rgba(183, 77, 77, 0.12);
-  --pc1: #b28b52;
-  --pc2: #9d7a4d;
-  --pc3: #3e8e5b;
-  --pc4: #a86f4d;
-  --pc5: #64706b;
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
+  --surface-2: #e7ecf1;
+  --ink: #101a24;
+  --ink-2: #4d5c6b;
+  --muted: #66757f;
+  --grid: #dde4ea;
+  --baseline: #c3ced9;
+  --border: #dae2e9;
+  --accent: #0d7c73;
+  --accent-weak: rgba(13, 124, 115, 0.12);
+  --good: #237547;
+  --warn: #96620d;
+  --critical: #bf3b30;
+  --critical-weak: rgba(191, 59, 48, 0.12);
+  /* Chart series — distinct in hue *and* lightness so they survive greyscale
+     and the common red/green colour-vision deficiencies. */
+  --pc1: #0d7c73;
+  --pc2: #3b5bc0;
+  --pc3: #b87811;
+  --pc4: #a8386b;
+  --pc5: #5c7080;
+  --shadow: 0 8px 30px rgba(16, 26, 36, 0.07);
 }
 
 :root[data-theme="dark"] {
-  --plane: #12110f;
-  --surface: #171613;
-  --surface-2: #1f1d18;
-  --ink: #f6f1e8;
-  --ink-2: #b9b0a2;
-  --muted: #8f8679;
-  --grid: #2b2822;
-  --baseline: #423d34;
-  --border: #2f2a22;
-  --accent: #c8a66b;
-  --accent-weak: rgba(200, 166, 107, 0.16);
-  --good: #5da57a;
-  --warn: #d9b063;
-  --critical: #c96d6d;
-  --critical-weak: rgba(201, 109, 109, 0.16);
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
+  --plane: #0a1015;
+  --surface: #10191f;
+  --surface-2: #17232b;
+  --ink: #e8eff3;
+  --ink-2: #9fb1bd;
+  --muted: #748794;
+  --grid: #1f2d36;
+  --baseline: #35474f;
+  --border: #22323b;
+  --accent: #2ec4b0;
+  --accent-weak: rgba(46, 196, 176, 0.16);
+  --good: #45b07c;
+  --warn: #d9a441;
+  --critical: #e06a5e;
+  --critical-weak: rgba(224, 106, 94, 0.16);
+  --pc1: #2ec4b0;
+  --pc2: #7b91ef;
+  --pc3: #d9a441;
+  --pc4: #e07aa6;
+  --pc5: #8ba3b3;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+/**
+ * Type — IBM Plex. Plex Sans reads as engineered rather than neutral, and
+ * Plex Mono gives the numerals and column labels the character of a meter
+ * faceplate. Loaded in index.html; the stack falls back to system UI faces.
+ */
+:root {
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
 }
 
 @theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
   --color-plane: var(--plane);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
@@ -84,19 +110,59 @@ body,
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, rgba(178, 139, 82, 0.08), transparent 28%), var(--plane);
+  background: radial-gradient(circle at top left, rgba(13, 124, 115, 0.07), transparent 30%), var(--plane);
   color: var(--ink);
-  font-family: "Geist", "SF Pro Display", "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: rgba(178, 139, 82, 0.22);
+  background: var(--accent-weak);
 }
 
+/**
+ * Meter readout. Figures are set in the mono face with tabular figures, so
+ * digits stay in vertical register down a column and a changing number never
+ * reflows the row it sits in.
+ */
 .tnum {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  letter-spacing: -0.01em;
+}
+
+/** Engraved faceplate label — column headers, eyebrows, small captions. */
+.faceplate {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 500;
+}
+
+/**
+ * Table rows. Separators and the zebra tint live here rather than on every
+ * <Td>, so a row reads as one horizontal band and the hover highlight covers
+ * the full width instead of stopping at cell edges.
+ */
+.mh-table tbody tr {
+  border-top: 1px solid var(--border);
+  transition: background-color 0.12s ease;
+}
+
+.mh-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
+}
+
+.mh-table tbody tr:hover {
+  background: var(--accent-weak);
+}
+
+/* First column carries the row's identity — give it a little more weight. */
+.mh-table tbody td:first-child {
+  color: var(--ink);
+  font-weight: 500;
 }
 
 :focus-visible {

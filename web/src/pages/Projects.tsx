@@ -32,7 +32,7 @@ export function Projects() {
   });
 
   useEffect(() => {
-    document.title = "Projects — ClaudeFleet";
+    document.title = "Projects — Meterhouse";
   }, []);
 
   const nameOf = new Map((systems.data ?? []).map((s) => [s.system_id, s.display_name]));
@@ -48,6 +48,7 @@ export function Projects() {
       sessions: (a, b) => a.sessions - b.sessions,
       total: (a, b) => a.total_tokens - b.total_tokens,
     },
+    descFirst: ["input", "output", "cache", "sessions", "total"],
     initialSortKey: "total",
     initialSortDir: "desc",
   });

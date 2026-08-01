@@ -1,5 +1,5 @@
 {
-  "name": "claudefleet",
+  "name": "meterhouse",
   "private": true,
   "version": "1.0.0",
   "description": "Centralized Claude Code usage monitoring across a fleet of PCs",

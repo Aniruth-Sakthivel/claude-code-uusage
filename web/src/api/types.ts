@@ -184,3 +184,121 @@ export interface UpdateUserPayload {
   is_active?: boolean | null;
   system_ids?: string[] | null;
 }
+
+// ── Claude subscription accounts ──────────────────────────────────────────────
+export type AccountHealth = "healthy" | "moderate" | "heavy" | "unknown";
+
+export interface AccountSystemRef {
+  system_id: string;
+  display_name: string;
+  status: string;
+}
+
+export interface AccountUserRef {
+  id: number;
+  email: string;
+  full_name: string;
+}
+
+export interface AccountRow {
+  id: number;
+  account_uuid: string;
+  email_address: string;
+  display_name: string;
+  organization_name: string;
+  plan_label: string;
+  plan_family: string;
+  has_extra_usage_enabled: boolean;
+  /** online = a bound PC is live; idle = bound but quiet; offline = unbound. */
+  status: "online" | "idle" | "offline";
+  health: AccountHealth;
+  weekly_percent: number | null;
+  weekly_resets_at: string | null;
+  session_percent: number | null;
+  session_resets_at: string | null;
+  /** Claude Code cached these figures — they can lag reality. */
+  utilization_fetched_at: string | null;
+  systems: AccountSystemRef[];
+  users: AccountUserRef[];
+  tokens_today: number;
+  tokens_week: number;
+  last_seen_at: string | null;
+}
+
+export interface AccountSummary {
+  total_accounts: number;
+  by_family: Record<string, number>;
+  in_use: number;
+  idle: number;
+  heaviest: { account_uuid: string; email_address: string; percent: number } | null;
+}
+
+export interface AccountsResponse {
+  accounts: AccountRow[];
+  summary: AccountSummary;
+  scoped: boolean;
+}
+
+// ── people (master-detail session view) ───────────────────────────────────────
+export interface PersonRow {
+  id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  status: "online" | "offline";
+  system_count: number;
+  account_email: string | null;
+  account_org_type: string | null;
+  account_rate_limit_tier: string | null;
+  plan_label: string | null;
+  tokens_today: number;
+  tokens_range: number;
+  sessions: number;
+  projects: number;
+  /** null when this window predates prompt collection - render as an em dash. */
+  prompts: number | null;
+  last_active: string | null;
+}
+
+export interface PeopleResponse {
+  people: PersonRow[];
+  range: string;
+}
+
+export interface PersonProject {
+  project_name: string;
+  sessions: number;
+  total_tokens: number;
+}
+
+export interface PersonDetail {
+  person: PersonRow;
+  projects: PersonProject[];
+  timeseries: { day: string; total_tokens: number }[];
+  range: string;
+}
+
+export interface PersonSessionRow {
+  session_id: string;
+  system_id: string;
+  system_name: string;
+  project_name: string;
+  model: string;
+  title: string | null;
+  first_ts: string;
+  last_ts: string;
+  prompts: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_tokens: number;
+  total_tokens: number;
+}
+
+export interface PersonSessionsResponse {
+  sessions: PersonSessionRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  page_count: number;
+}

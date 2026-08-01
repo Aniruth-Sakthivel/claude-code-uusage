@@ -12,18 +12,18 @@ load_dotenv(pathlib.Path(__file__).resolve().parents[1] / ".env")
 
 # Configure an isolated test DB + secrets BEFORE the app (and its cached
 # settings) are imported. This suite is now an integration suite: user auth
-# is Supabase Auth, so it needs a real Supabase project (CLAUDEFLEET_SUPABASE_*
+# is Supabase Auth, so it needs a real Supabase project (METERHOUSE_SUPABASE_*
 # env vars) and network access. It creates and signs in real Supabase users.
 # Supabase rejects some fake TLDs (e.g. ".local") as invalid, so use
 # ".example.com" (reserved for documentation/testing, RFC 2606) for test users.
-_DB = pathlib.Path(tempfile.gettempdir()) / "claudefleet_test.db"
+_DB = pathlib.Path(tempfile.gettempdir()) / "meterhouse_test.db"
 if _DB.exists():
     _DB.unlink()
-os.environ["CLAUDEFLEET_DATABASE_URL"] = f"sqlite:///{_DB.as_posix()}"
-os.environ.setdefault("CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL",
+os.environ["METERHOUSE_DATABASE_URL"] = f"sqlite:///{_DB.as_posix()}"
+os.environ.setdefault("METERHOUSE_BOOTSTRAP_ADMIN_EMAIL",
                       f"admin-{uuid.uuid4().hex[:8]}@example.com")
-os.environ.setdefault("CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD", "adminpass123")
-os.environ.setdefault("CLAUDEFLEET_BOOTSTRAP_ADMIN_FULL_NAME", "Admin")
+os.environ.setdefault("METERHOUSE_BOOTSTRAP_ADMIN_PASSWORD", "adminpass123")
+os.environ.setdefault("METERHOUSE_BOOTSTRAP_ADMIN_FULL_NAME", "Admin")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -31,8 +31,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 _REQUIRED_SUPABASE_ENV = (
-    "CLAUDEFLEET_SUPABASE_URL", "CLAUDEFLEET_SUPABASE_ANON_KEY",
-    "CLAUDEFLEET_SUPABASE_SERVICE_ROLE_KEY",
+    "METERHOUSE_SUPABASE_URL", "METERHOUSE_SUPABASE_ANON_KEY",
+    "METERHOUSE_SUPABASE_SERVICE_ROLE_KEY",
 )
 
 
@@ -61,8 +61,8 @@ def client():
 def client_no_bootstrap_admin(monkeypatch):
     """Like `client`, but without a pre-seeded bootstrap admin — for testing
     the "first Supabase user to provision becomes admin" first-run path."""
-    monkeypatch.delenv("CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL", raising=False)
-    monkeypatch.delenv("CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("METERHOUSE_BOOTSTRAP_ADMIN_EMAIL", raising=False)
+    monkeypatch.delenv("METERHOUSE_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
     from app.config import get_settings
     get_settings.cache_clear()
     import app.seed as seed_module
@@ -116,8 +116,8 @@ def supabase_sign_up(client, email: str, password: str, full_name: str = "") -> 
 @pytest.fixture
 def admin_token(client) -> str:
     # Bootstrapped credentials are created at startup via env vars.
-    email = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_EMAIL"]
-    password = os.environ["CLAUDEFLEET_BOOTSTRAP_ADMIN_PASSWORD"]
+    email = os.environ["METERHOUSE_BOOTSTRAP_ADMIN_EMAIL"]
+    password = os.environ["METERHOUSE_BOOTSTRAP_ADMIN_PASSWORD"]
     return supabase_sign_in(email, password)
 
 

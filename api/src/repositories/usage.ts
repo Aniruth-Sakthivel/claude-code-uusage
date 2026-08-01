@@ -17,6 +17,8 @@ import type { DbLike } from "../db/client.js";
 import { db } from "../db/client.js";
 import {
   dailyAggregates,
+  promptDaily,
+  sessionMeta,
   syncLogs,
   systems,
   usageEvents,
@@ -46,6 +48,82 @@ export interface IngestResult {
   inserted: number;
   duplicates: number;
   failed: number;
+}
+
+export interface IncomingPrompt {
+  sessionId: string;
+  day: string;
+  promptCount: number;
+}
+
+export interface IncomingTitle {
+  sessionId: string;
+  title: string;
+}
+
+/**
+ * Merge prompt counts and session titles.
+ *
+ * Separate from the event path because both are keyed differently and neither
+ * should ever block a usage push. Prompt counts arrive *cumulative*, so the
+ * merge takes the greater of the two values: a retried or out-of-order batch
+ * can then never lower a count, and a lost batch self-heals on the next sync.
+ */
+export async function ingestSessionExtras(
+  systemId: string,
+  prompts: IncomingPrompt[],
+  titles: IncomingTitle[],
+  conn: DbLike = db,
+): Promise<void> {
+  if (prompts.length === 0 && titles.length === 0) return;
+
+  await conn.transaction(async (tx) => {
+    if (prompts.length > 0) {
+      // Collapse duplicates within the batch — ON CONFLICT cannot touch the
+      // same row twice in one statement.
+      const byKey = new Map<string, IncomingPrompt>();
+      for (const p of prompts) {
+        const key = `${p.day}|${p.sessionId}`;
+        const existing = byKey.get(key);
+        if (!existing || p.promptCount > existing.promptCount) byKey.set(key, p);
+      }
+
+      await tx
+        .insert(promptDaily)
+        .values(
+          [...byKey.values()].map((p) => ({
+            systemId,
+            day: p.day,
+            sessionId: p.sessionId,
+            promptCount: p.promptCount,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [promptDaily.systemId, promptDaily.day, promptDaily.sessionId],
+          set: {
+            promptCount: sql`greatest(${promptDaily.promptCount}, excluded.prompt_count)`,
+            updatedAt: new Date(),
+          },
+        });
+    }
+
+    if (titles.length > 0) {
+      const byId = new Map(titles.map((t) => [t.sessionId, t]));
+      await tx
+        .insert(sessionMeta)
+        .values(
+          [...byId.values()].map((t) => ({
+            systemId,
+            sessionId: t.sessionId,
+            title: t.title.slice(0, 300),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [sessionMeta.systemId, sessionMeta.sessionId],
+          set: { title: sql`excluded.title`, updatedAt: new Date() },
+        });
+    }
+  });
 }
 
 /**

@@ -19,6 +19,9 @@ import { Overview } from "./pages/Overview";
 import { Projects } from "./pages/Projects";
 import { Register } from "./pages/Register";
 import { Sessions } from "./pages/Sessions";
+import { Accounts } from "./pages/Accounts";
+import { AdminSettings } from "./pages/AdminSettings";
+import { Settings } from "./pages/Settings";
 import { Systems } from "./pages/Systems";
 import { Welcome } from "./pages/Welcome";
 
@@ -111,6 +114,30 @@ export default function App() {
                 element={
                   <Protected>
                     <Systems />
+                  </Protected>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <Protected>
+                    <Settings />
+                  </Protected>
+                }
+              />
+              <Route
+                path="/admin/settings"
+                element={
+                  <Protected capability="manage_users">
+                    <AdminSettings />
+                  </Protected>
+                }
+              />
+              <Route
+                path="/accounts"
+                element={
+                  <Protected capability="view_all">
+                    <Accounts />
                   </Protected>
                 }
               />

@@ -124,9 +124,9 @@ export function ConnectPanel({
 
           <li>
             <div className="mb-2 text-base font-medium">2. Install the agent</div>
-            <CodeBlock code="pip install claudefleet-agent" label="Install" />
+            <CodeBlock code="pip install meterhouse-rotor" label="Install" />
             <p className="mt-2 text-sm text-muted">
-              If <code className="rounded bg-surface-2 px-1">claudefleet</code> isn't
+              If <code className="rounded bg-surface-2 px-1">meterhouse</code> isn't
               recognized afterwards, pip installed it outside PATH — add the printed
               Scripts folder to PATH, or call it by full path.
             </p>

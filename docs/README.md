@@ -1,6 +1,6 @@
 # Documentation Index
 
-**ClaudeFleet** is original software for centralized Claude Code usage monitoring
+**Meterhouse** is original software for centralized Claude Code usage monitoring
 across multiple PCs. It does **not** reuse, vendor, or depend on any third-party
 project. Our own scanner was written from scratch against Claude Code's on-disk
 JSONL format.
@@ -16,7 +16,7 @@ JSONL format.
 
 **LOCAL mode (works today):**
 ```
-Claude Code → agent scanner → ~/.claude/claudefleet/usage.db → CLI (scan/today/week/stats)
+Claude Code → agent scanner → ~/.claude/meterhouse/usage.db → CLI (scan/today/week/stats)
 ```
 No central server required.
 

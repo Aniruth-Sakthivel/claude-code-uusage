@@ -1,4 +1,4 @@
-from claudefleet import parser
+from meterhouse import parser
 from tests.conftest import SYSTEM_ID, assistant_record
 
 

@@ -1,6 +1,6 @@
 """Long-running agent process: scheduled scanning + optional real-time push.
 
-This is what `claudefleet daemon` runs (the install script points a Scheduled
+This is what `meterhouse daemon` runs (the install script points a Scheduled
 Task at this, triggered once at logon, instead of spawning a fresh short-lived
 process every N minutes — a WebSocket connection needs a process that stays
 alive to hold it).
@@ -9,7 +9,7 @@ Responsibilities are split by module on purpose (each independently testable):
   - scanner.scan()   -- unchanged, does the actual transcript ingestion
   - sync.sync_store  -- unchanged, does the actual REST upload
   - ws_client.WSClient -- optional real-time status/metrics channel
-  - health.HealthState -- what `claudefleet health` reports
+  - health.HealthState -- what `meterhouse health` reports
   - config.AgentConfig -- all the tunables, no source edits required
 
 Concurrency: a single :class:`asyncio.Lock` around each scan cycle guarantees
@@ -31,7 +31,7 @@ from .logging_setup import configure_logging, get_logger
 from .scanner import scan as run_scan
 from .store import Store, default_db_path
 
-log = get_logger("claudefleet.daemon")
+log = get_logger("meterhouse.daemon")
 
 
 def _process_metrics() -> dict:
@@ -125,11 +125,37 @@ class Daemon:
             client = SyncClient(
                 self._ident.server_url, self._ident.api_key, timeout=self._cfg.http_timeout_seconds
             )
-            sync_store(store, client, verbose=False)
+            sync_store(store, client, verbose=False,
+                       send_titles=self._cfg.session_titles_enabled)
         except SyncError as exc:
             log.warning("sync failed, will retry next cycle", extra={"reason": str(exc)})
         finally:
             store.close()
+
+        # Account reporting runs after usage sync and swallows its own errors:
+        # this is an optional extra and must never cost us a usage push.
+        await self._report_account_once()
+
+    async def _report_account_once(self) -> None:
+        if not self._cfg.account_reporting_enabled:
+            return
+        if not self._ident.server_url or not self._ident.api_key:
+            return
+        from .account import collect_account_report
+        from .sync import SyncClient, SyncError
+
+        try:
+            payload = collect_account_report(enabled=True)
+            if payload is None:
+                return  # not signed in, or nothing readable — nothing to say
+            client = SyncClient(
+                self._ident.server_url, self._ident.api_key, timeout=self._cfg.http_timeout_seconds
+            )
+            client.report_account(payload)
+        except SyncError as exc:
+            log.warning("account report failed", extra={"reason": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - never let this kill a scan cycle
+            log.warning("account report skipped", extra={"reason": f"{type(exc).__name__}: {exc}"})
 
     async def _scan_loop(self) -> None:
         while not self._stop.is_set():

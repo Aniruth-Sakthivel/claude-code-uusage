@@ -1,6 +1,6 @@
 import os
 
-from claudefleet.config import AgentConfig
+from meterhouse.config import AgentConfig
 
 
 def test_defaults_when_no_file(tmp_path):
@@ -37,13 +37,13 @@ def test_unknown_keys_in_file_are_ignored(tmp_path):
 def test_env_override_wins_over_file(tmp_path, monkeypatch):
     path = tmp_path / "runtime.json"
     AgentConfig(scan_interval_seconds=30).save(path)
-    monkeypatch.setenv("CLAUDEFLEET_SCAN_INTERVAL", "15")
+    monkeypatch.setenv("METERHOUSE_SCAN_INTERVAL", "15")
     cfg = AgentConfig.load(path)
     assert cfg.scan_interval_seconds == 15
 
 
 def test_malformed_env_override_is_ignored(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLAUDEFLEET_SCAN_INTERVAL", "not-a-number")
+    monkeypatch.setenv("METERHOUSE_SCAN_INTERVAL", "not-a-number")
     cfg = AgentConfig.load(tmp_path / "missing.json")
     assert cfg.scan_interval_seconds == 60
 

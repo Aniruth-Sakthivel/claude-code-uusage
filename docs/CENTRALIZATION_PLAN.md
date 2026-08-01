@@ -2,13 +2,13 @@
 
 > Technical proposal to extend the audited single-PC tool (see [`UPSTREAM_AUDIT.md`](UPSTREAM_AUDIT.md), v1.5.5) into a centralized platform answering: **"Which of PC-01 / PC-02 / PC-03 is generating the most tracked Claude Code token activity?"** — while keeping the existing standalone tool fully working.
 >
-> **Status:** ClaudeFleet is **original software** (no third-party project reused). Phase 0 (our own local agent + scanner) is **implemented and verified**. Everything from Phase 1 (central API) onward is the roadmap below.
+> **Status:** Meterhouse is **original software** (no third-party project reused). Phase 0 (our own local agent + scanner) is **implemented and verified**. Everything from Phase 1 (central API) onward is the roadmap below.
 
 ---
 
 ## Guiding principles
 
-1. **Our own code.** The agent (`agent/claudefleet/`) is written from scratch against Claude Code's on-disk JSONL format; it uses only standard frameworks (stdlib locally; FastAPI/React centrally), never a forked project.
+1. **Our own code.** The agent (`agent/meterhouse/`) is written from scratch against Claude Code's on-disk JSONL format; it uses only standard frameworks (stdlib locally; FastAPI/React centrally), never a forked project.
 2. **Two modes coexist.** LOCAL mode (agent CLI) works with zero central dependency; CENTRALIZED mode layers on top.
 3. **Additive, versioned schema.** Schema changes go through `Store.init_schema` (idempotent) + migrations keyed on `meta.schema_version`.
 4. **No conversation content ever leaves the machine** — only metadata + token counts. Never prompts, responses, or source code.
@@ -23,7 +23,7 @@
 
 **LOCAL (implemented):**
 ```
-Claude Code → agent scanner → ~/.claude/claudefleet/usage.db → CLI (scan/today/week/stats)
+Claude Code → agent scanner → ~/.claude/meterhouse/usage.db → CLI (scan/today/week/stats)
 ```
 
 **CENTRALIZED (roadmap):**
@@ -35,7 +35,7 @@ Claude Code → agent scanner → local SQLite → Sync client → Central API �
 
 Repository layout (monorepo root):
 ```
-/agent/         ✅ our local agent: claudefleet/{identity,parser,store,scanner,pricing,reports,cli}.py + tests
+/agent/         ✅ our local agent: meterhouse/{identity,parser,store,scanner,pricing,reports,cli}.py + tests
 /server/        ⏳ FastAPI central API (Router→Service→Repository), Alembic migrations
 /web/           ⏳ React + TS + Vite + Tailwind + TanStack Query + ApexCharts + Lucide
 /deploy/        ⏳ install.ps1 / uninstall.ps1 / update.ps1 (Windows Task Scheduler)
@@ -133,6 +133,7 @@ All timestamps stored UTC; converted to local only for display.
 - **Two independent auth systems:** user JWT/session (humans) vs per-PC API keys (agents). Neither accepts the other's credentials.
 - **Server-side authorization is mandatory** — a Developer assigned to PC-01 gets only PC-01 even if they hand-craft `GET /systems`; the repository layer filters by `user_systems`. RBAC tests assert this directly against the API.
 - **Privacy invariants:** transcripts read-only; only metadata + token counts transmitted; audit logs and sync payloads never contain prompts, responses, source, passwords, or keys.
+- **Account reporting is the one opt-in exception** (`account_reporting_enabled`, default `false`). When enabled, the agent additionally reads `~/.claude.json` for the Claude account's non-secret identity (email, org, plan tier) and the cached rate-limit utilisation. Enforced by a hardcoded allowlist in `agent/meterhouse/account.py`; credentials and OAuth tokens are never read, and `.credentials.json` is never opened. `meterhouse account show` prints the exact payload without transmitting it. Guarded by `agent/tests/test_account.py`.
 
 ---
 

@@ -72,6 +72,55 @@ export const registerResponse = z.object({
   display_name: z.string(),
 });
 
+// ── Claude account reporting ──────────────────────────────────────────────────
+/**
+ * Mirrors the agent's allowlist in `agent/meterhouse/account.py`. Kept strict
+ * on purpose: the server should reject anything the agent was not supposed to
+ * send, rather than quietly storing it.
+ */
+export const accountIdentityIn = z
+  .object({
+    account_uuid: z.string().min(1).max(64),
+    email_address: z.string().max(255).default(""),
+    display_name: z.string().max(120).default(""),
+    organization_name: z.string().max(200).default(""),
+    organization_uuid: z.string().max(64).default(""),
+    organization_type: z.string().max(64).default(""),
+    rate_limit_tier: z.string().max(64).default(""),
+    organization_role: z.string().max(40).default(""),
+    billing_type: z.string().max(40).default(""),
+    has_extra_usage_enabled: z.boolean().default(false),
+  })
+  .strict();
+
+const accountLimitIn = z.object({
+  kind: z.string().min(1).max(32),
+  group: z.string().max(32).default(""),
+  scope_label: z.string().max(80).default(""),
+  // A percentage 0-100, not a fraction. Verified against real Claude Code data.
+  percent: z.number().min(0).max(1000).default(0),
+  severity: z.string().max(24).default(""),
+  is_active: z.boolean().default(false),
+  resets_at: z.string().max(64).default(""),
+});
+
+const accountDollarsIn = z.object({
+  limit_dollars: z.number().optional(),
+  used_dollars: z.number().optional(),
+  remaining_dollars: z.number().optional(),
+});
+
+export const accountReportIn = z.object({
+  account: accountIdentityIn,
+  utilization: z
+    .object({
+      fetched_at_ms: z.number().int().nonnegative().default(0),
+      limits: z.array(accountLimitIn).max(32).default([]),
+      dollars: z.record(z.string(), accountDollarsIn).default({}),
+    })
+    .nullish(),
+});
+
 export const usageEventIn = z.object({
   suffix: z.string().min(1).max(96),
   session_id: z.string().max(64),
@@ -93,10 +142,26 @@ export const usageEventIn = z.object({
 /** Batch cap: the previous API accepted unbounded arrays. */
 export const MAX_SYNC_BATCH = 1000;
 
+/** Cumulative human-prompt count for one session on one day. */
+export const promptDailyIn = z.object({
+  session_id: z.string().min(1).max(64),
+  day: z.string().length(10),
+  prompt_count: z.number().int().min(0).max(100_000),
+});
+
+/** Only sent by machines that opted into session-title sync. */
+export const sessionTitleIn = z.object({
+  session_id: z.string().min(1).max(64),
+  title: z.string().max(300),
+});
+
 export const syncRequest = z.object({
   events: z.array(usageEventIn).max(MAX_SYNC_BATCH, {
     message: `Batch too large — send at most ${MAX_SYNC_BATCH} events per request`,
   }),
+  // Both default to empty so an older agent's payload still validates.
+  prompts: z.array(promptDailyIn).max(MAX_SYNC_BATCH).default([]),
+  session_titles: z.array(sessionTitleIn).max(MAX_SYNC_BATCH).default([]),
 });
 
 export const syncResponse = z.object({

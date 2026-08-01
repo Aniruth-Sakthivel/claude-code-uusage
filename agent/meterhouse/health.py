@@ -1,7 +1,7 @@
 """Health/diagnostics state for the daemon.
 
 The daemon (a long-running process) writes its status to a small JSON file on
-every cycle; the short-lived `claudefleet health` CLI command just reads it.
+every cycle; the short-lived `meterhouse health` CLI command just reads it.
 That split means health can be inspected without reaching into the daemon's
 process (no IPC/RPC needed) and survives the daemon being unreachable — a
 stale timestamp *is* the diagnostic in that case.
@@ -17,10 +17,10 @@ from pathlib import Path
 
 
 def default_health_path() -> Path:
-    env = os.environ.get("CLAUDEFLEET_HEALTH_FILE")
+    env = os.environ.get("METERHOUSE_HEALTH_FILE")
     if env:
         return Path(env)
-    return Path.home() / ".claude" / "claudefleet" / "health.json"
+    return Path.home() / ".claude" / "meterhouse" / "health.json"
 
 
 def _now() -> str:

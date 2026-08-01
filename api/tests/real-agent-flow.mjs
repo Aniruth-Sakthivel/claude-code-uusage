@@ -53,7 +53,7 @@ async function api(pathname, { token, method = "GET", body } = {}) {
   return { status: res.status, body: json };
 }
 
-console.log("ClaudeFleet — real agent end-to-end verification");
+console.log("Meterhouse — real agent end-to-end verification");
 
 // ── reset ─────────────────────────────────────────────────────────────────────
 step("0. Reset");
@@ -127,14 +127,14 @@ if (!existsSync(AGENT_DIR)) {
 }
 
 function runAgent(args) {
-  return execFileSync("python", ["-m", "claudefleet", ...args], {
+  return execFileSync("python", ["-m", "meterhouse", ...args], {
     cwd: AGENT_DIR,
     encoding: "utf8",
     env: {
       ...process.env,
       // Isolated config + DB so a developer's real agent state is untouched.
-      CLAUDEFLEET_CONFIG: path.join(os.tmpdir(), "cf-verify-agent.json"),
-      CLAUDEFLEET_DB: path.join(os.tmpdir(), "cf-verify-usage.db"),
+      METERHOUSE_CONFIG: path.join(os.tmpdir(), "cf-verify-agent.json"),
+      METERHOUSE_DB: path.join(os.tmpdir(), "cf-verify-usage.db"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

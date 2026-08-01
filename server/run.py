@@ -1,4 +1,4 @@
-"""One-command launcher for the ClaudeFleet central server.
+"""One-command launcher for the Meterhouse central server.
 
     cd server
     pip install -e .          # first time only
@@ -7,7 +7,7 @@
 On the very first run it automatically creates the SQLite database, applies
 migrations, and seeds the four roles. You then create the first admin account
 from the web app (registration is open only until the first user exists).
-Everything is configurable via CLAUDEFLEET_* environment variables
+Everything is configurable via METERHOUSE_* environment variables
 (see app/config.py).
 """
 
@@ -26,7 +26,7 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8000"))
 
     print("=" * 64)
-    print("  ClaudeFleet central server")
+    print("  Meterhouse central server")
     print("=" * 64)
     print(f"  API:        http://{host}:{port}")
     print(f"  API docs:   http://{host}:{port}/docs")
@@ -34,7 +34,7 @@ def main() -> None:
     print("  First run: open the web app and create your admin account")
     print("             (registration is open only until the first user exists).")
     if not s.supabase_url:
-        print("  WARNING: CLAUDEFLEET_SUPABASE_URL is not set — auth will not work.")
+        print("  WARNING: METERHOUSE_SUPABASE_URL is not set — auth will not work.")
     print("=" * 64)
 
     uvicorn.run("app.main:app", host=host, port=port, reload=False)

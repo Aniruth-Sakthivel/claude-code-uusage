@@ -22,6 +22,7 @@ import {
   Card,
   CardHead,
   CodeBlock,
+  CONTROL_HEIGHT,
   ConfirmDialog,
   EmptyState,
   ErrorState,
@@ -48,7 +49,7 @@ export function AdminKeys() {
   const [pendingRotate, setPendingRotate] = useState<ApiKeyRow | null>(null);
 
   useEffect(() => {
-    document.title = "Agent API keys — ClaudeFleet";
+    document.title = "Agent API keys — Meterhouse";
   }, []);
 
   const systems = useQuery({
@@ -160,7 +161,11 @@ export function AdminKeys() {
         <Card>
           <CardHead title="Keys" />
 
-          <div className="mb-4 grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          {/* A PC picker needs far less width than the name field, so the
+              columns are sized to their content rather than split evenly.
+              `items-end` only lines up if every cell is the same height —
+              hence no hint text here and a height-matched button below. */}
+          <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_auto] sm:items-end">
             <Field label="PC">
               {(p) => (
                 <Select
@@ -177,7 +182,10 @@ export function AdminKeys() {
               )}
             </Field>
 
-            <Field label="New key name" hint="For your own reference.">
+            {/* The placeholder already shows what a name looks like, so the
+                old "For your own reference." hint added a line that knocked
+                the whole row out of alignment for no information. */}
+            <Field label="New key name">
               {(p) => (
                 <Input
                   {...p}
@@ -188,7 +196,11 @@ export function AdminKeys() {
               )}
             </Field>
 
-            <Button onClick={() => addKey.mutate()} loading={addKey.isPending}>
+            <Button
+              className={CONTROL_HEIGHT}
+              onClick={() => addKey.mutate()}
+              loading={addKey.isPending}
+            >
               Create key
             </Button>
           </div>

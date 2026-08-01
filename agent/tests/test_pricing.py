@@ -1,4 +1,4 @@
-from claudefleet import pricing
+from meterhouse import pricing
 
 
 def test_exact_model_pricing():

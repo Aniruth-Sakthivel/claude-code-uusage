@@ -4,6 +4,16 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    /**
+     * drizzle-orm (API workspace) still declares a React 18 peer, so npm keeps
+     * a second React hoisted at the repo root. Any dependency that also lands
+     * at the root — lucide-react today — would resolve *that* copy and ship two
+     * Reacts in one bundle, which breaks hooks and context in ways that only
+     * show up at runtime. Pin resolution to the app's own copy.
+     */
+    dedupe: ["react", "react-dom"],
+  },
   server: {
     port: 5173,
     // Proxy API calls to the local Node API in dev, mirroring the same-origin

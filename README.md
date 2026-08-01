@@ -1,8 +1,8 @@
-# ClaudeFleet
+# Meterhouse
 
 > Centralized Claude Code usage monitoring across multiple PCs.
 
-ClaudeFleet answers one question across a fleet of machines:
+Meterhouse answers one question across a fleet of machines:
 
 > **Which PC is generating the most Claude Code token activity?**
 
@@ -13,15 +13,33 @@ usage locally in SQLite, and syncs the metadata to a central API + dashboard.
 > local transcript files — an observability *estimate*, not a reading of
 > Anthropic's official Claude Max/Pro quota or billing.
 
-**Privacy:** only token counts and metadata ever leave a machine. Never prompts,
-responses, or source code. The agent never modifies Claude Code's files.
+**Privacy:** by default, only token counts and metadata ever leave a machine.
+Never prompts, responses, or source code. The agent never modifies Claude
+Code's files.
+
+**Optional account reporting (off by default).** The agent can additionally
+report your Claude account's non-secret identity — email, organisation, plan
+tier — and the rate-limit utilisation figures Claude Code already caches, so an
+admin can see which subscription each person is on and how loaded it is. This
+is the one feature that reads `~/.claude.json`, it is governed by a hardcoded
+field allowlist, and **OAuth tokens and credentials are never read**
+(`.credentials.json` is never opened). It stays off until someone turns it on:
+
+```bash
+meterhouse account show      # print exactly what would be sent — sends nothing
+meterhouse account enable    # opt in
+meterhouse account disable   # opt back out
+```
+
+Inspect the allowlist in `agent/meterhouse/account.py`; the guarantees are
+enforced by tests in `agent/tests/test_account.py`.
 
 ---
 
 ## Layout
 
 ```
-agent/    local agent (Python, standard library only) — scanner, store, sync, CLI
+agent/    Rotor — the metering agent (Python, stdlib only): scanner, store, sync, CLI
 api/      central API (Node + Fastify + Drizzle on Supabase Postgres)
 web/      dashboard (React + Vite + TypeScript + Tailwind v4)
 netlify/  serverless function entry — the API runs here in production
@@ -91,7 +109,7 @@ exists on a fresh install:
 
 | Field | Value |
 |---|---|
-| Email | `admin@claudefleet.local` |
+| Email | `admin@meterhouse.local` |
 | Password | `ChangeMe!2026` |
 | Role | Administrator |
 
@@ -144,10 +162,10 @@ shell history — the real API key is substituted server-side.
 Prefer to do it manually? The Connect page also shows the individual commands:
 
 ```powershell
-pip install claudefleet-agent
-claudefleet register --server https://your-site --api-key cfk_... --display-name PC-01
-claudefleet scan
-claudefleet sync
+pip install meterhouse-rotor
+meterhouse register --server https://your-site --api-key cfk_... --display-name PC-01
+meterhouse scan
+meterhouse sync
 ```
 
 > A browser cannot read `~/.claude/projects/*.jsonl` — sandboxing forbids it — so
@@ -160,13 +178,13 @@ The agent works with no server at all:
 
 ```bash
 cd agent
-python -m claudefleet scan     # ingest transcripts
-python -m claudefleet today    # today's usage by model
-python -m claudefleet week     # last 7 days
-python -m claudefleet stats     # all-time
+python -m meterhouse scan     # ingest transcripts
+python -m meterhouse today    # today's usage by model
+python -m meterhouse week     # last 7 days
+python -m meterhouse stats     # all-time
 ```
 
-Local store: `~/.claude/claudefleet/usage.db` (override with `CLAUDEFLEET_DB`).
+Local store: `~/.claude/meterhouse/usage.db` (override with `METERHOUSE_DB`).
 
 ---
 

@@ -1,7 +1,7 @@
 import json
 
-from claudefleet import scanner
-from claudefleet.store import Store
+from meterhouse import scanner
+from meterhouse.store import Store
 from tests.conftest import SYSTEM_ID, assistant_record
 
 

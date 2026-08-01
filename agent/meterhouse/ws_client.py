@@ -33,7 +33,7 @@ from .config import AgentConfig
 from .health import HealthState
 from .logging_setup import get_logger
 
-log = get_logger("claudefleet.ws")
+log = get_logger("meterhouse.ws")
 
 CommandHandler = Callable[[dict], Awaitable[None]]
 
@@ -89,7 +89,7 @@ class WSClient:
         except ImportError:
             log.error(
                 "ws_enabled is set but the 'websockets' package is not installed; "
-                "install with: pip install claudefleet-agent[realtime]"
+                "install with: pip install meterhouse-rotor[realtime]"
             )
             return
 

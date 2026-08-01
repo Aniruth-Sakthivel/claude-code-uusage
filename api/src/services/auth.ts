@@ -17,9 +17,19 @@ import { roles, users } from "../db/schema.js";
 import { forbidden, badRequest } from "../core/errors.js";
 import { CAPABILITIES, type Principal, type Role } from "../core/rbac.js";
 import * as adminRepo from "../repositories/admin.js";
+import { getSettings } from "../repositories/settings.js";
 
+/**
+ * Whether self-service signup is accepted.
+ *
+ * Bootstrap always wins: with no users at all, signup must work or there is no
+ * way to create the first admin and lock the instance down. Beyond that it is
+ * an admin setting.
+ */
 export async function registrationOpen(): Promise<boolean> {
-  return (await adminRepo.countUsers()) === 0;
+  if ((await adminRepo.countUsers()) === 0) return true;
+  const settings = await getSettings();
+  return settings.registrationOpen;
 }
 
 export interface ProvisionInput {

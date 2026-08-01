@@ -1,4 +1,4 @@
-"""ClaudeFleet local agent.
+"""Meterhouse local agent.
 
 Original software (not derived from any third-party project). Scans Claude Code
 JSONL transcripts on the local machine, stores a centralization-ready usage

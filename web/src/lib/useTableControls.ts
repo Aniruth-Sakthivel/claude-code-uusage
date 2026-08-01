@@ -20,6 +20,13 @@ export function useTableControls<T>(
     sorters: Record<string, (a: T, b: T) => number>;
     initialSortKey?: string;
     initialSortDir?: "asc" | "desc";
+    /**
+     * Keys whose comparator is numeric or chronological. Clicking these sorts
+     * descending first: for tokens and timestamps the interesting end is the
+     * biggest and the most recent, so ascending-first would bury the answer
+     * on the last page. Text columns keep ascending-first (A→Z).
+     */
+    descFirst?: string[];
     pageSize?: number;
   },
 ) {
@@ -53,7 +60,7 @@ export function useTableControls<T>(
   function toggleSort(key: string) {
     if (sortKey !== key) {
       setSortKey(key);
-      setSortDir("asc");
+      setSortDir(opts.descFirst?.includes(key) ? "desc" : "asc");
     } else {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     }

@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { currentAgent, requireAgent } from "../core/guards.js";
 import { db } from "../db/client.js";
 import { systems } from "../db/schema.js";
-import { ingestEvents, type IncomingEvent } from "../repositories/usage.js";
+import { ingestEvents, ingestSessionExtras, type IncomingEvent } from "../repositories/usage.js";
 import { registerRequest, syncRequest } from "../schemas/index.js";
 
 export async function usageRoutes(app: FastifyInstance) {
@@ -64,6 +64,18 @@ export async function usageRoutes(app: FastifyInstance) {
       isSubagent: e.is_subagent,
       agentId: e.agent_id ?? null,
     }));
+
+    // Prompt counts and titles are merged separately and never block the
+    // event path — a failure here must not cost the machine its usage push.
+    await ingestSessionExtras(
+      system.systemId,
+      body.prompts.map((p) => ({
+        sessionId: p.session_id,
+        day: p.day,
+        promptCount: p.prompt_count,
+      })),
+      body.session_titles.map((t) => ({ sessionId: t.session_id, title: t.title })),
+    );
 
     return ingestEvents(system.systemId, events);
   });

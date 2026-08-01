@@ -126,6 +126,11 @@ def make_event_id(system_id: str, message_id: str | None, *,
 class ParseResult:
     events: list[dict] = field(default_factory=list)
     sessions: dict[str, dict] = field(default_factory=dict)  # session_id -> meta
+    # Human prompts, as (prompt_id, session_id, day). Keyed by the record's own
+    # uuid so re-reading a grown file cannot double-count. Kept separate from
+    # `events` on purpose: a prompt carries no tokens, and folding it into the
+    # event stream would inflate event and session counts everywhere.
+    prompts: list[tuple[str, str, str]] = field(default_factory=list)
     line_count: int = 0
 
 
@@ -139,6 +144,28 @@ def _blank_session(session_id: str) -> dict:
         "model": None,
         "topic": None,
     }
+
+
+def is_human_prompt(record: dict) -> bool:
+    """True for a turn a person actually typed.
+
+    Records of type ``user`` are mostly *not* human input — the great majority
+    are tool results being fed back to the model, plus a few internal meta
+    records. Measured on a real transcript: 206 ``user`` records, of which only
+    10 were genuine prompts. Counting the type alone overstates by ~20x.
+
+    A record counts when it is neither meta nor a tool-result carrier.
+    """
+    if record.get("type") != "user":
+        return False
+    if record.get("isMeta"):
+        return False
+    content = (record.get("message") or {}).get("content")
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "tool_result":
+                return False
+    return True
 
 
 def _extract_title(record: dict) -> str | None:
@@ -202,6 +229,13 @@ def parse_records(records, *, system_id: str, source_file: str = "",
             meta["git_branch"] = git_branch
 
         if rtype != "assistant":
+            # Human prompts are counted here, before the assistant-only gate.
+            # A record without its own uuid can't be deduplicated safely, so
+            # it is skipped rather than risk inflating the count on re-scan.
+            if is_human_prompt(record):
+                prompt_id = record.get("uuid")
+                if prompt_id and ts_utc:
+                    result.prompts.append((str(prompt_id), session_id, day_of(ts_utc)))
             continue
 
         msg = record.get("message", {}) or {}
