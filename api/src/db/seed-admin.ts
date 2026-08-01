@@ -23,8 +23,8 @@ import * as supabaseAdmin from "../core/supabase-admin.js";
 import * as repo from "../repositories/admin.js";
 import { seedRoles } from "../services/auth.js";
 
-export const DEFAULT_ADMIN_EMAIL = "admin@meterhouse.local";
-export const DEFAULT_ADMIN_PASSWORD = "ChangeMe!2026";
+export const DEFAULT_ADMIN_EMAIL = "admin@claude-code-usage.local";
+export const DEFAULT_ADMIN_PASSWORD = "Admin@2026!";
 const DEFAULT_ADMIN_NAME = "Administrator";
 
 export interface SeedAdminResult {

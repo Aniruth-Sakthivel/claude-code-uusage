@@ -15,6 +15,7 @@ import {
   userCreate,
   userUpdate,
 } from "../schemas/index.js";
+import { resolveInviteRedirectTo } from "../core/public-url.js";
 import * as admin from "../services/admin.js";
 import { userOut } from "../services/auth.js";
 
@@ -76,7 +77,7 @@ export async function adminRoutes(app: FastifyInstance) {
       currentUser(req),
       body,
       requestContext(req),
-      origin ? `${origin}/login` : undefined,
+      resolveInviteRedirectTo(origin),
     );
     return reply.code(201).send({ ...userOut(view), invited });
   });

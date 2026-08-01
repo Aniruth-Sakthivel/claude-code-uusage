@@ -109,8 +109,8 @@ exists on a fresh install:
 
 | Field | Value |
 |---|---|
-| Email | `admin@meterhouse.local` |
-| Password | `ChangeMe!2026` |
+| Email | `admin@claude-code-usage.local` |
+| Password | `Admin@2026!` |
 | Role | Administrator |
 
 > **Change this password on first sign-in** (**Admin → Users & roles → edit**).
