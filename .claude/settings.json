@@ -69,7 +69,8 @@
       "Bash(grep -n '\\\\$exe\\\\|exeUrl\\\\|ExeUrl\\\\|ExePath\\\\|--- [0-9]\\\\.' /d/Github/claud-code-usage/api/src/services/onboarding.ts)",
       "Bash(npx vite *)",
       "Bash(npm --workspace=web exec wrangler -- --version)",
-      "Bash(npm --workspace=web exec wrangler -- deploy --dry-run)"
+      "Bash(npm --workspace=web exec wrangler -- deploy --dry-run)",
+      "Bash(pkill -f \"dist/server.js\")"
     ],
     "additionalDirectories": [
       "\\tmp",

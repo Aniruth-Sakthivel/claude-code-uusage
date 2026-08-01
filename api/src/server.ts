@@ -17,7 +17,7 @@ async function main() {
   // single command. Migrations own the tables themselves.
   await seedRoles();
 
-  const host = process.env.HOST ?? "127.0.0.1";
+  const host = process.env.HOST ?? "0.0.0.0";
   await app.listen({ port: config.PORT, host });
 
   const line = "=".repeat(60);
