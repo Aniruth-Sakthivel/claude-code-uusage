@@ -67,7 +67,9 @@
       "Bash(git push *)",
       "Bash(python -c \"import meterhouse; print\\(meterhouse.__version__\\)\")",
       "Bash(grep -n '\\\\$exe\\\\|exeUrl\\\\|ExeUrl\\\\|ExePath\\\\|--- [0-9]\\\\.' /d/Github/claud-code-usage/api/src/services/onboarding.ts)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(npm --workspace=web exec wrangler -- --version)",
+      "Bash(npm --workspace=web exec wrangler -- deploy --dry-run)"
     ],
     "additionalDirectories": [
       "\\tmp",
