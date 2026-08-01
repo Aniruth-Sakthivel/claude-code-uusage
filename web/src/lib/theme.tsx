@@ -1,12 +1,5 @@
 /**
  * Theme state, shared app-wide.
- *
- * Previously each component called its own `useTheme()`, so Layout and Landing
- * held independent copies of the state — it only appeared to work because they
- * are never mounted together.
- *
- * The initial theme is also applied by an inline script in index.html, before
- * first paint, to avoid a flash of the wrong theme on load.
  */
 
 import {
@@ -18,6 +11,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { MoonStar, SunMedium } from "lucide-react";
 
 type Theme = "light" | "dark";
 const KEY = "cf_theme";
@@ -61,9 +55,9 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label={`Switch to ${dark ? "light" : "dark"} theme`}
       aria-pressed={dark}
-      className="rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-sm text-ink-2 hover:text-ink"
+      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface-2 text-ink-2 transition hover:text-ink"
     >
-      {dark ? "☀" : "☾"}
+      {dark ? <SunMedium className="h-4 w-4" /> : <MoonStar className="h-4 w-4" />}
     </button>
   );
 }

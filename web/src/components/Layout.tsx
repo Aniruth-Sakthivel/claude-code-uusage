@@ -1,16 +1,6 @@
-/**
- * App shell.
- *
- * Responsive: the previous version used a fixed 236px sidebar with no
- * breakpoint, so the whole console was unusable below ~900px. Below `lg` the
- * sidebar becomes a slide-over drawer.
- *
- * Nav items are gated on server-provided capabilities, so a manager or viewer
- * sees exactly what they can actually use.
- */
-
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { Bell, Building2, ChevronRight, Compass, Cpu, FolderKanban, LayoutGrid, Menu, MonitorPlay, Search, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 import { useAuth } from "../auth/AuthContext";
 import type { Capability } from "../api/types";
@@ -21,37 +11,34 @@ interface NavItem {
   label: string;
   end?: boolean;
   cap?: Capability;
+  icon?: typeof LayoutGrid;
 }
 
 const MONITOR: NavItem[] = [
-  { to: "/dashboard", label: "Overview", end: true },
-  { to: "/systems", label: "Systems" },
-  { to: "/projects", label: "Projects" },
-  { to: "/sessions", label: "Sessions" },
+  { to: "/dashboard", label: "Overview", end: true, icon: LayoutGrid },
+  { to: "/systems", label: "Systems", icon: Cpu },
+  { to: "/projects", label: "Projects", icon: FolderKanban },
+  { to: "/sessions", label: "Sessions", icon: MonitorPlay },
 ];
 
-const SETUP: NavItem[] = [{ to: "/connect", label: "Connect a PC" }];
+const SETUP: NavItem[] = [{ to: "/connect", label: "Connect a PC", icon: Building2 }];
 
 const ADMIN: NavItem[] = [
-  { to: "/admin/users", label: "Users & roles", cap: "manage_users" },
-  { to: "/admin/keys", label: "Agent API keys", cap: "manage_keys" },
-  { to: "/admin/audit", label: "Audit log", cap: "view_audit" },
+  { to: "/admin/users", label: "Users & roles", cap: "manage_users", icon: UserRound },
+  { to: "/admin/keys", label: "Agent API keys", cap: "manage_keys", icon: ShieldCheck },
+  { to: "/admin/audit", label: "Audit log", cap: "view_audit", icon: Compass },
 ];
 
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex items-center gap-2.5">
-      <div
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sm font-bold text-white"
-        style={{ background: "linear-gradient(135deg, var(--pc1), var(--accent))" }}
-        aria-hidden
-      >
-        CF
+      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-accent/20 bg-surface text-sm font-semibold text-accent" aria-hidden>
+        A
       </div>
       {!compact && (
         <div>
-          <div className="text-lg font-semibold leading-tight">ClaudeFleet</div>
-          <div className="text-2xs text-muted">Usage monitor</div>
+          <div className="text-[15px] font-semibold leading-tight text-ink">Aurelia</div>
+          <div className="text-2xs text-muted">Private observatory</div>
         </div>
       )}
     </div>
@@ -62,25 +49,29 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
   if (items.length === 0) return null;
   return (
     <>
-      <div className="px-2 pb-1 pt-4 text-2xs font-semibold uppercase tracking-[0.09em] text-muted">
+      <div className="px-2 pb-1 pt-4 text-2xs font-semibold uppercase tracking-[0.16em] text-muted">
         {title}
       </div>
-      {items.map((n) => (
-        <NavLink
-          key={n.to}
-          to={n.to}
-          end={n.end}
-          className={({ isActive }) =>
-            `block rounded-lg px-3 py-2 text-base transition ${
-              isActive
-                ? "bg-accent-weak font-semibold text-accent"
-                : "font-medium text-ink-2 hover:bg-surface-2"
-            }`
-          }
-        >
-          {n.label}
-        </NavLink>
-      ))}
+      {items.map((n) => {
+        const Icon = n.icon ?? LayoutGrid;
+        return (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            end={n.end}
+            className={({ isActive }) =>
+              `flex items-center gap-2 rounded-[12px] px-3 py-2.5 text-sm transition ${
+                isActive
+                  ? "bg-surface text-ink shadow-[0_8px_24px_rgba(0,0,0,0.04)]"
+                  : "text-ink-2 hover:bg-surface-2"
+              }`
+            }
+          >
+            <Icon className="h-4 w-4" />
+            <span>{n.label}</span>
+          </NavLink>
+        );
+      })}
     </>
   );
 }
@@ -90,29 +81,43 @@ export function Layout({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
 
-  // Close the drawer on navigation.
   useEffect(() => setNavOpen(false), [location.pathname]);
 
   const adminItems = ADMIN.filter((i) => !i.cap || can(i.cap));
 
   const sidebar = (
-    <nav className="flex h-full flex-col gap-0.5 p-4" aria-label="Main">
-      <div className="mb-2 px-2 pt-1">
+    <nav className="flex h-full flex-col p-4" aria-label="Main">
+      <div className="mb-5 px-2 pt-1">
         <Brand />
+      </div>
+
+      <div className="mb-4 rounded-[14px] border border-line bg-surface px-3 py-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted">
+          <Sparkles className="h-3.5 w-3.5" />
+          Quiet luxury mode
+        </div>
+        <div className="mt-2 text-sm text-ink-2">Calm, precise, and beautifully composed.</div>
       </div>
 
       <NavSection title="Monitor" items={MONITOR} />
       <NavSection title="Setup" items={SETUP} />
       <NavSection title="Admin" items={adminItems} />
 
-      <div className="mt-auto border-t border-line pt-3">
-        <div className="truncate px-2 text-sm font-medium">
-          {user?.full_name || user?.email}
+      <div className="mt-auto rounded-[16px] border border-line bg-surface p-3">
+        <div className="flex items-center gap-2">
+          <div className="grid h-9 w-9 place-items-center rounded-full bg-surface-2 text-ink-2">
+            <UserRound className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-ink">
+              {user?.full_name || user?.email}
+            </div>
+            <div className="truncate text-xs capitalize text-muted">{user?.role}</div>
+          </div>
         </div>
-        <div className="px-2 text-xs capitalize text-muted">{user?.role}</div>
         <button
           onClick={logout}
-          className="mt-2 w-full rounded-lg bg-surface-2 px-3 py-1.5 text-left text-sm text-ink-2 hover:text-ink"
+          className="mt-3 w-full rounded-[10px] border border-line bg-surface-2 px-3 py-2 text-left text-sm text-ink-2 transition hover:text-ink"
         >
           Sign out
         </button>
@@ -121,46 +126,54 @@ export function Layout({ children }: { children: ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[236px_1fr]">
-      {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen border-r border-line bg-surface lg:block">
+    <div className="min-h-screen bg-plane lg:grid lg:grid-cols-[260px_1fr]">
+      <aside className="sticky top-0 hidden h-screen border-r border-line bg-[var(--surface-2)] lg:block">
         {sidebar}
       </aside>
 
-      {/* Mobile drawer */}
       {navOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setNavOpen(false)}
-            aria-hidden
-          />
-          <aside className="absolute left-0 top-0 h-full w-[260px] border-r border-line bg-surface">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setNavOpen(false)} aria-hidden />
+          <aside className="absolute left-0 top-0 h-full w-[270px] border-r border-line bg-[var(--surface-2)]">
             {sidebar}
           </aside>
         </div>
       )}
 
       <div className="flex min-w-0 flex-col">
-        <header className="flex items-center gap-3 border-b border-line px-4 py-3 sm:px-7 lg:justify-end lg:border-b-0 lg:pt-5">
-          <button
-            type="button"
-            onClick={() => setNavOpen(true)}
-            aria-label="Open navigation"
-            aria-expanded={navOpen}
-            className="rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-ink-2 lg:hidden"
-          >
-            ☰
-          </button>
-          <div className="lg:hidden">
-            <Brand compact />
-          </div>
-          <div className="ml-auto lg:ml-0">
-            <ThemeToggle />
+        <header className="border-b border-line bg-surface/70 px-4 py-3 backdrop-blur sm:px-7 lg:px-8">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setNavOpen(true)}
+                aria-label="Open navigation"
+                aria-expanded={navOpen}
+                className="rounded-full border border-line bg-surface-2 p-2 text-ink-2 lg:hidden"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+              <div className="hidden text-sm text-muted sm:flex sm:items-center sm:gap-2">
+                <span className="font-medium text-ink">Workspace</span>
+                <ChevronRight className="h-4 w-4" />
+                <span>Operations</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-2 rounded-full border border-line bg-surface-2 px-3 py-2 text-sm text-ink-2 sm:flex">
+                <Search className="h-4 w-4" />
+                <span>Search</span>
+              </div>
+              <button className="rounded-full border border-line bg-surface-2 p-2 text-ink-2">
+                <Bell className="h-4 w-4" />
+              </button>
+              <ThemeToggle />
+            </div>
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pb-12 pt-4 sm:px-7">
+        <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 pb-12 pt-5 sm:px-7 lg:px-8">
           {children}
         </main>
       </div>
