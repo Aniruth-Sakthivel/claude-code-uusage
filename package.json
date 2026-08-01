@@ -1,0 +1,13 @@
+{
+  "name": "claud-code-usage-monorepo",
+  "private": true,
+  "workspaces": [
+    "web",
+    "api"
+  ],
+  "scripts": {
+    "build": "npm --prefix web run build",
+    "build:web": "npm --prefix web run build",
+    "typecheck": "npm --prefix web run typecheck"
+  }
+}
