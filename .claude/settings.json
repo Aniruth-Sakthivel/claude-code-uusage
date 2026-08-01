@@ -70,7 +70,10 @@
       "Bash(npx vite *)",
       "Bash(npm --workspace=web exec wrangler -- --version)",
       "Bash(npm --workspace=web exec wrangler -- deploy --dry-run)",
-      "Bash(pkill -f \"dist/server.js\")"
+      "Bash(pkill -f \"dist/server.js\")",
+      "Bash(git revert *)",
+      "Bash(git stash *)",
+      "Bash(git commit *)"
     ],
     "additionalDirectories": [
       "\\tmp",
