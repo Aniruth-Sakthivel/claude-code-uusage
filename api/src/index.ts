@@ -5,12 +5,7 @@
  * server and the Netlify function handler.
  */
 
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-
 import cors from "@fastify/cors";
-import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 
@@ -26,17 +21,6 @@ import { settingsRoutes } from "./routes/settings.js";
 import { usageRoutes } from "./routes/usage.js";
 
 export const VERSION = "1.0.0";
-
-/**
- * When running as a single Render service, the web build lives alongside
- * the API in the same checkout — this API process serves it directly
- * instead of relying on a separate static host. Netlify instead serves
- * web/dist through its own CDN, so this stays a no-op there.
- */
-const webDistDir = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../web/dist",
-);
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -76,19 +60,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.code(500).send({ detail: "Internal server error" });
   });
 
-  const serveWebBuild = existsSync(webDistDir);
-  if (serveWebBuild) {
-    await app.register(fastifyStatic, { root: webDistDir });
-  }
-
-  app.setNotFoundHandler((req, reply) => {
-    // SPA client-side routing: any unmatched non-API GET falls back to
-    // index.html so React Router can resolve the path in the browser.
-    if (serveWebBuild && req.method === "GET" && !req.url.startsWith("/api/")) {
-      return reply.sendFile("index.html");
-    }
-    return reply.code(404).send({ detail: "Not found" });
-  });
+  app.setNotFoundHandler((_req, reply) =>
+    reply.code(404).send({ detail: "Not found" }),
+  );
 
   /** Health check that actually touches the database. */
   app.get("/api/v1/health", async () => {

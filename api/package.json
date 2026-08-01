@@ -6,7 +6,6 @@
   "description": "Meterhouse central API — Fastify + Drizzle on Supabase Postgres",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js",
     "ws-server": "tsx watch src/ws/server.ts",
     "ws-server:prod": "node dist/ws/server.js",
     "build": "tsc -p tsconfig.build.json",
@@ -20,7 +19,6 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
-    "@fastify/static": "^8.0.4",
     "@supabase/supabase-js": "^2.110.8",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.36.4",
