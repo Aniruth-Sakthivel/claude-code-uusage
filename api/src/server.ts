@@ -28,6 +28,31 @@ async function main() {
   console.log(`  Health:   http://${host}:${config.PORT}/api/v1/health`);
   console.log(`  Database: ${config.DATABASE_URL.replace(/:[^:@/]+@/, ":****@")}`);
   console.log(`${line}\n`);
+
+  // Only meaningful here: this is the one persistent process among the app's
+  // entry points (src/netlify.ts is one-invocation-per-request and has no
+  // connections to drain). Stop accepting new requests, let in-flight ones
+  // finish, then release the DB pool — a plain SIGKILL/crash would otherwise
+  // drop in-flight requests and can leave a connection dangling in Postgres
+  // until it times out server-side.
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\nReceived ${signal}, shutting down gracefully...`);
+    try {
+      await app.close(); // waits for in-flight requests, per Fastify's own semantics
+      const { closeDb } = await import("./db/client.js");
+      await closeDb();
+      console.log("Shutdown complete.");
+      process.exit(0);
+    } catch (err) {
+      console.error("Error during shutdown:", err);
+      process.exit(1);
+    }
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
 main().catch((err) => {

@@ -20,6 +20,29 @@ class SyncError(Exception):
     """Raised when the server is unreachable or returns a non-2xx status."""
 
 
+_SECURE_SCHEMES = {"https", "wss"}
+
+
+def warn_if_insecure(url: str) -> str | None:
+    """Return a warning string if ``url`` would send the API key in
+    cleartext, else None. Covers both the REST server URL (http/https) and
+    the WebSocket push URL (ws/wss) — both carry the same Bearer api_key.
+    Loopback URLs are exempt — local dev has no network path to sniff.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme in _SECURE_SCHEMES:
+        return None
+    if parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+        return None
+    secure_scheme = "wss" if parsed.scheme == "ws" else "https"
+    return (
+        f"WARNING: '{url}' is not encrypted — the API key will be sent in "
+        f"cleartext. Use a {secure_scheme}:// URL in production."
+    )
+
+
 def _suffix(event_id: str) -> str:
     # local event_id is "<local_system_id>:<suffix>"; the server prepends its own
     # system_id (resolved from the API key), so we send only the suffix.
@@ -74,6 +97,15 @@ class SyncClient:
 
     def heartbeat(self) -> dict:
         return self._post("/api/v1/systems/heartbeat", {})
+
+    def ack_command(self, command_id: int, status: str, detail: str = "") -> dict:
+        """Report the outcome of a fleet-management command back to the
+        server. Until this is called the command stays 'pending' and keeps
+        being handed out on every check-in (register/heartbeat/sync/ws)."""
+        return self._post(
+            f"/api/v1/systems/commands/{command_id}/ack",
+            {"status": status, "detail": detail[:2000]},
+        )
 
     def push(self, events: list[dict], prompts: list[dict] | None = None,
              session_titles: list[dict] | None = None) -> dict:

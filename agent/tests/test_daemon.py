@@ -82,3 +82,109 @@ def test_sync_skipped_without_server_config(tmp_path, monkeypatch):
     monkeypatch.setattr(sync_mod, "sync_store", fail_if_called)
 
     asyncio.run(d._sync_once())  # should return silently, not raise
+
+
+def make_central_identity(tmp_path) -> Identity:
+    ident = make_identity(tmp_path)
+    ident.server_url = "https://central.example"
+    ident.api_key = "cfk_test"
+    return ident
+
+
+def test_command_pause_stops_scheduled_scans_but_not_manual(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_scan(*, system_id, db_path, verbose):
+        calls.append(True)
+        return {"new": 0, "updated": 0, "skipped": 0, "events_inserted": 0}
+
+    monkeypatch.setattr(daemon_mod, "run_scan", fake_scan)
+    d = Daemon(AgentConfig(), make_identity(tmp_path), db_path=tmp_path / "usage.db")
+
+    async def scenario():
+        status, detail = await d._execute_command({"action": "pause"})
+        assert status == "acked"
+        assert d._paused.is_set()
+
+        # Scheduled ticks are skipped while paused...
+        result = await d._scan_once(trigger="schedule")
+        assert result is None
+        assert calls == []
+
+        # ...but an explicit scan_now command still runs.
+        status, _ = await d._execute_command({"action": "scan_now"})
+        assert status == "acked"
+        await asyncio.sleep(0)  # let the fire-and-forget scan task run
+        assert calls == [True]
+
+        status, detail = await d._execute_command({"action": "resume"})
+        assert status == "acked"
+        assert not d._paused.is_set()
+
+    asyncio.run(scenario())
+
+
+def test_command_set_config_applies_allowlisted_fields_only(tmp_path):
+    cfg = AgentConfig()
+    saved = []
+    cfg.save = lambda path=None: saved.append(True)  # avoid touching the real config file
+    d = Daemon(cfg, make_identity(tmp_path), db_path=tmp_path / "usage.db")
+
+    async def scenario():
+        status, detail = await d._execute_command({
+            "action": "set_config",
+            "payload": {"scan_interval_seconds": 30, "not_a_real_field": "x"},
+        })
+        assert status == "acked"
+        assert "scan_interval_seconds" in detail
+        assert "not_a_real_field" not in detail
+
+    asyncio.run(scenario())
+    assert d._cfg.scan_interval_seconds == 30
+    assert saved == [True]
+
+
+def test_command_unknown_action_reports_failed(tmp_path):
+    d = Daemon(AgentConfig(), make_identity(tmp_path), db_path=tmp_path / "usage.db")
+    status, detail = asyncio.run(d._execute_command({"action": "reboot_the_planet"}))
+    assert status == "failed"
+    assert "reboot_the_planet" in detail
+
+
+def test_run_command_acks_over_rest_when_id_present(tmp_path, monkeypatch):
+    acks = []
+
+    import meterhouse.sync as sync_mod
+
+    def fake_ack(self, command_id, status, detail=""):
+        acks.append((command_id, status, detail))
+        return {"ok": True}
+
+    monkeypatch.setattr(sync_mod.SyncClient, "ack_command", fake_ack)
+
+    d = Daemon(AgentConfig(), make_central_identity(tmp_path), db_path=tmp_path / "usage.db")
+    asyncio.run(d._run_command({"id": 42, "action": "resume"}))
+
+    assert acks == [(42, "acked", "scan loop resumed")]
+
+
+def test_poll_commands_dispatches_each_pending_command(tmp_path, monkeypatch):
+    executed = []
+
+    async def fake_execute(message):
+        executed.append(message["action"])
+        return "acked", "ok"
+
+    d = Daemon(AgentConfig(), make_central_identity(tmp_path), db_path=tmp_path / "usage.db")
+    monkeypatch.setattr(d, "_execute_command", fake_execute)
+    monkeypatch.setattr(d, "_ack_command", lambda *a, **k: None)
+
+    class FakeClient:
+        def heartbeat(self):
+            return {"ok": True, "commands": [
+                {"id": 1, "action": "pause", "payload": {}},
+                {"id": 2, "action": "resume", "payload": {}},
+            ]}
+
+    asyncio.run(d._poll_commands(FakeClient()))
+    assert executed == ["pause", "resume"]

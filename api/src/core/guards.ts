@@ -15,7 +15,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { authenticateAgent } from "./auth-agent.js";
 import { bearerToken, loadPrincipal, verifySupabaseToken } from "./auth-user.js";
 import { forbidden } from "./errors.js";
-import { can, type Capability, type Principal } from "./rbac.js";
+import { CLIENT, can, type Capability, type Principal } from "./rbac.js";
 import type { SystemRow } from "../db/schema.js";
 
 declare module "fastify" {
@@ -37,6 +37,15 @@ export async function requireUser(req: FastifyRequest, _reply: FastifyReply) {
   const token = bearerToken(req.headers.authorization);
   const claims = await verifySupabaseToken(token);
   req.user = await loadPrincipal(claims.sub);
+}
+
+/** Any signed-in user except the client-portal role — for workspace-wide
+ * surfaces (chat, wiki, automations, whiteboard, reports, search, calendar)
+ * a client must never reach even by hand-crafting a request: they cover
+ * every initiative, not just the ones explicitly shared with that client. */
+export async function requireStaff(req: FastifyRequest, reply: FastifyReply) {
+  await requireUser(req, reply);
+  if (req.user?.role === CLIENT) throw forbidden("Not available to client accounts");
 }
 
 export function requireCapability(capability: Capability) {

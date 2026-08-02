@@ -6,17 +6,19 @@ import type { FastifyInstance } from "fastify";
 
 import { currentUser, requestContext, requireCapability } from "../core/guards.js";
 import { ROLES, ROLE_DESCRIPTIONS } from "../core/rbac.js";
-import type { ApiKeyRow, SystemRow } from "../db/schema.js";
+import type { AgentCommandRow, ApiKeyRow, SystemRow } from "../db/schema.js";
 import * as repo from "../repositories/admin.js";
 import { isOnline } from "../core/time.js";
 import {
   apiKeyCreate,
+  commandCreate,
   systemCreate,
   userCreate,
   userUpdate,
 } from "../schemas/index.js";
 import { resolveInviteRedirectTo } from "../core/public-url.js";
 import * as admin from "../services/admin.js";
+import * as commands from "../services/commands.js";
 import { userOut } from "../services/auth.js";
 
 function keyOut(k: ApiKeyRow) {
@@ -29,6 +31,20 @@ function keyOut(k: ApiKeyRow) {
     last_used_at: k.lastUsedAt?.toISOString() ?? null,
     revoked_at: k.revokedAt?.toISOString() ?? null,
     active: k.revokedAt === null,
+  };
+}
+
+function commandOut(c: AgentCommandRow) {
+  return {
+    id: c.id,
+    system_id: c.systemId,
+    action: c.action,
+    payload: JSON.parse(c.payload || "{}"),
+    status: c.status,
+    created_at: c.createdAt.toISOString(),
+    delivered_at: c.deliveredAt?.toISOString() ?? null,
+    acked_at: c.ackedAt?.toISOString() ?? null,
+    ack_detail: c.ackDetail,
   };
 }
 
@@ -166,6 +182,29 @@ export async function adminRoutes(app: FastifyInstance) {
     async (req, reply) => {
       await admin.revokeApiKey(currentUser(req), Number(req.params.id), requestContext(req));
       return reply.code(204).send();
+    },
+  );
+
+  // ── agent commands (fleet management) ───────────────────────────────────────
+  app.get<{ Params: { id: string } }>(
+    "/api/v1/admin/systems/:id/commands",
+    manageSystems,
+    async (req) => (await commands.listCommands(req.params.id)).map(commandOut),
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/api/v1/admin/systems/:id/commands",
+    manageSystems,
+    async (req, reply) => {
+      const body = commandCreate.parse(req.body ?? {});
+      const command = await commands.enqueueCommand(
+        currentUser(req),
+        req.params.id,
+        body.action,
+        body.payload,
+        requestContext(req),
+      );
+      return reply.code(201).send(commandOut(command));
     },
   );
 

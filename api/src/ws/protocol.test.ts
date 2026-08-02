@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { agentMessageIn, dashboardMessageIn } from "./protocol.js";
+import { agentMessageIn, dashboardMessageIn, WsErrorCode, wsError } from "./protocol.js";
 
 describe("agentMessageIn", () => {
   it("accepts a valid heartbeat", () => {
@@ -89,5 +89,20 @@ describe("dashboardMessageIn", () => {
     expect(dashboardMessageIn.safeParse({ type: "subscribe", system_id: "x" }).success).toBe(
       false,
     );
+  });
+});
+
+describe("wsError", () => {
+  it("builds a structured error frame that keeps `type` as the discriminator", () => {
+    // The reference Python agent (agent/meterhouse/ws_client.py) branches on
+    // message["type"], not an "event" key — this must never change.
+    const frame = wsError(WsErrorCode.INVALID_MESSAGE, "malformed JSON");
+    expect(frame).toEqual({ type: "error", code: "INVALID_MESSAGE", message: "malformed JSON" });
+  });
+
+  it("round-trips through JSON with the same shape", () => {
+    const frame = wsError(WsErrorCode.RATE_LIMIT_EXCEEDED, "slow down");
+    const parsed = JSON.parse(JSON.stringify(frame));
+    expect(parsed).toEqual({ type: "error", code: "RATE_LIMIT_EXCEEDED", message: "slow down" });
   });
 });

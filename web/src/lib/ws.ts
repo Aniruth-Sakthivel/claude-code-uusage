@@ -29,6 +29,43 @@ export interface AlertEvent {
   at: string;
 }
 
+export interface ChatMessageEvent {
+  type: "chat_message";
+  channel_id: number;
+  message: {
+    id: number;
+    author_user_id: number | null;
+    author_email: string;
+    body: string;
+    created_at: string;
+  };
+}
+
+export interface BoardElement {
+  id: number;
+  kind: "note" | "stroke";
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BoardUpdateEvent {
+  type: "board_update";
+  board_id: number;
+  element: BoardElement;
+}
+
+export interface BoardDeleteEvent {
+  type: "board_delete";
+  board_id: number;
+  element_id: number;
+}
+
+export type BoardOp =
+  | { kind: "create"; element_kind: "note" | "stroke"; data: Record<string, unknown> }
+  | { kind: "update"; element_id: number; data: Record<string, unknown> }
+  | { kind: "delete"; element_id: number };
+
 type Listener<T> = (event: T) => void;
 
 const MAX_BACKOFF_MS = 30_000;
@@ -40,6 +77,9 @@ class DashboardSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly systemListeners = new Set<Listener<SystemUpdatedEvent>>();
   private readonly alertListeners = new Set<Listener<AlertEvent>>();
+  private readonly chatListeners = new Set<Listener<ChatMessageEvent>>();
+  private readonly boardUpdateListeners = new Set<Listener<BoardUpdateEvent>>();
+  private readonly boardDeleteListeners = new Set<Listener<BoardDeleteEvent>>();
 
   connect(): void {
     if (!import.meta.env.VITE_PUBLIC_WS_URL) return; // WS infra not configured — no-op.
@@ -64,6 +104,37 @@ class DashboardSocket {
     return () => this.alertListeners.delete(cb);
   }
 
+  onChatMessage(cb: Listener<ChatMessageEvent>): () => void {
+    this.chatListeners.add(cb);
+    return () => this.chatListeners.delete(cb);
+  }
+
+  /** True if the frame went out over the live socket. False means "not
+   * connected" — callers should fall back to the REST send endpoint. */
+  sendChat(channelId: number, body: string): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify({ type: "chat_send", channel_id: channelId, body }));
+    return true;
+  }
+
+  onBoardUpdate(cb: Listener<BoardUpdateEvent>): () => void {
+    this.boardUpdateListeners.add(cb);
+    return () => this.boardUpdateListeners.delete(cb);
+  }
+
+  onBoardDelete(cb: Listener<BoardDeleteEvent>): () => void {
+    this.boardDeleteListeners.add(cb);
+    return () => this.boardDeleteListeners.delete(cb);
+  }
+
+  /** Whiteboard has no REST write path — false here means the edit is
+   * simply dropped, which the UI should surface (see components/Whiteboard.tsx). */
+  sendBoardOp(boardId: number, op: BoardOp): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify({ type: "board_op", board_id: boardId, op }));
+    return true;
+  }
+
   private async open(): Promise<void> {
     const base = import.meta.env.VITE_PUBLIC_WS_URL as string;
     const {
@@ -86,6 +157,12 @@ class DashboardSocket {
           for (const cb of this.systemListeners) cb(msg as SystemUpdatedEvent);
         } else if (msg?.type === "alert") {
           for (const cb of this.alertListeners) cb(msg as AlertEvent);
+        } else if (msg?.type === "chat_message") {
+          for (const cb of this.chatListeners) cb(msg as ChatMessageEvent);
+        } else if (msg?.type === "board_update") {
+          for (const cb of this.boardUpdateListeners) cb(msg as BoardUpdateEvent);
+        } else if (msg?.type === "board_delete") {
+          for (const cb of this.boardDeleteListeners) cb(msg as BoardDeleteEvent);
         }
       } catch {
         /* ignore malformed frames */

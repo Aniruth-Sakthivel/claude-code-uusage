@@ -13,11 +13,24 @@ import { qk } from "../api/queryKeys";
 import type { SystemRow } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../components/ui";
-import { dashboardSocket, type AlertEvent, type SystemUpdatedEvent } from "../lib/ws";
+import {
+  dashboardSocket,
+  type AlertEvent,
+  type BoardDeleteEvent,
+  type BoardOp,
+  type BoardUpdateEvent,
+  type ChatMessageEvent,
+  type SystemUpdatedEvent,
+} from "../lib/ws";
 
 interface RealtimeState {
   onSystemUpdated: (cb: (event: SystemUpdatedEvent) => void) => () => void;
   onAlert: (cb: (event: AlertEvent) => void) => () => void;
+  onChatMessage: (cb: (event: ChatMessageEvent) => void) => () => void;
+  sendChat: (channelId: number, body: string) => boolean;
+  onBoardUpdate: (cb: (event: BoardUpdateEvent) => void) => () => void;
+  onBoardDelete: (cb: (event: BoardDeleteEvent) => void) => () => void;
+  sendBoardOp: (boardId: number, op: BoardOp) => boolean;
 }
 
 const Ctx = createContext<RealtimeState | null>(null);
@@ -34,6 +47,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const value: RealtimeState = {
     onSystemUpdated: (cb) => dashboardSocket.onSystemUpdated(cb),
     onAlert: (cb) => dashboardSocket.onAlert(cb),
+    onChatMessage: (cb) => dashboardSocket.onChatMessage(cb),
+    sendChat: (channelId, body) => dashboardSocket.sendChat(channelId, body),
+    onBoardUpdate: (cb) => dashboardSocket.onBoardUpdate(cb),
+    onBoardDelete: (cb) => dashboardSocket.onBoardDelete(cb),
+    sendBoardOp: (boardId, op) => dashboardSocket.sendBoardOp(boardId, op),
   };
 
   return (

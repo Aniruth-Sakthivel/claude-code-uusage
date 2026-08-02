@@ -12,6 +12,8 @@ import { z } from "zod";
 import { currentUser, requireCapability, requireUser } from "../core/guards.js";
 import { ROLES } from "../core/rbac.js";
 import { daysAgoUtc } from "../core/time.js";
+import { cache } from "../core/cache.js";
+import { CacheKeys, CacheTags } from "../core/cacheKeys.js";
 import { writeAudit } from "../repositories/admin.js";
 import * as repo from "../repositories/settings.js";
 import { SETTING_DEFAULTS } from "../core/settings.js";
@@ -32,10 +34,21 @@ const preferencesIn = z.record(z.string().max(64), z.boolean());
 
 export async function settingsRoutes(app: FastifyInstance) {
   // ── fleet settings ──────────────────────────────────────────────────────
+  // Safe to cache: this is one global row (not per-user-scoped) that changes
+  // only via the PATCH below, which invalidates it in the same request.
   app.get(
     "/api/v1/settings",
     { preHandler: requireCapability("manage_users") },
-    async () => ({ settings: await repo.getSettings(), defaults: SETTING_DEFAULTS }),
+    async (_req, reply) => {
+      const settings = await cache.remember(CacheKeys.fleetSettings(), () => repo.getSettings(), {
+        ttlMs: 30_000,
+        tags: [CacheTags.SETTINGS],
+      });
+      // private: this response is only ever served to a capability-gated
+      // caller, never something a shared/browser cache should reuse.
+      reply.header("Cache-Control", "private, max-age=30");
+      return { settings, defaults: SETTING_DEFAULTS };
+    },
   );
 
   app.patch(
@@ -45,6 +58,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       const user = currentUser(req);
       const body = settingsIn.parse(req.body ?? {});
       const saved = await repo.saveSettings(body, user.id);
+      cache.invalidateTags([CacheTags.SETTINGS]);
       await writeAudit({
         actorUserId: user.id,
         actorEmail: user.email,

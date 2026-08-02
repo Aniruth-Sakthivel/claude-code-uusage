@@ -1,0 +1,1 @@
+ALTER TABLE "docs" ALTER COLUMN "initiative_id" DROP NOT NULL;

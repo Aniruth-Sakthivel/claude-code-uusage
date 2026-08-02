@@ -33,6 +33,14 @@ import { allowsSystem, type Allowed } from "../repositories/scope.js";
 /** Enrollment tokens are deliberately short-lived. */
 const TOKEN_TTL_MS = 15 * 60 * 1000;
 
+/** Single-quoted PowerShell literal, with any embedded quote escaped.
+ * Shared by both the generated installer and the manual copy-paste
+ * commands — a display name containing spaces or shell metacharacters
+ * must never produce a broken or unsafe line in either. */
+function pwshQuote(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
+}
+
 export interface ConnectInput {
   display_name: string;
   system_id?: string | null;
@@ -239,11 +247,11 @@ function manualSetupBlock(
 ): string {
   const registerArgs = [
     "meterhouse register",
-    `--server ${server}`,
-    `--api-key ${apiKey}`,
-    `--display-name ${displayName}`,
+    `--server ${pwshQuote(server)}`,
+    `--api-key ${pwshQuote(apiKey)}`,
+    `--display-name ${pwshQuote(displayName)}`,
   ];
-  if (wsUrl) registerArgs.push(`--ws-url ${wsUrl}`);
+  if (wsUrl) registerArgs.push(`--ws-url ${pwshQuote(wsUrl)}`);
 
   return [
     "# 1 - install the agent (once per PC)",
@@ -297,8 +305,7 @@ export function renderInstallScript(opts: {
   wsUrl?: string;
 }): string {
   const { server, apiKey, displayName, repoUrl, wsUrl } = opts;
-  // Single-quoted PowerShell literals; escape any embedded quote.
-  const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const q = pwshQuote;
 
   return `# Meterhouse agent setup - generated for ${displayName}
 # This script installs the agent (pip), connects this PC, and starts a

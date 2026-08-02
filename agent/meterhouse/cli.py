@@ -35,6 +35,12 @@ def _hr(char="-", width=64):
     print(char * width)
 
 
+def _row_cost(r) -> float:
+    """Estimated cost for one by-model row. Shared by `today` and `stats`,
+    which otherwise print different columns."""
+    return calc_cost(r["model"], r["inp"] or 0, r["out"] or 0, r["cr"] or 0, r["cc"] or 0)
+
+
 def cmd_scan(args):
     ident = load_identity(display_name=args.display_name)
     summary = run_scan(system_id=ident.system_id, db_path=args.db,
@@ -59,8 +65,7 @@ def cmd_today(args):
         ti = to = 0
         tc = 0.0
         for r in data["by_model"]:
-            c = calc_cost(r["model"], r["inp"] or 0, r["out"] or 0,
-                          r["cr"] or 0, r["cc"] or 0)
+            c = _row_cost(r)
             tc += c
             ti += r["inp"] or 0
             to += r["out"] or 0
@@ -116,8 +121,7 @@ def cmd_stats(args):
         _hr()
         print("  By model:")
         for r in s["by_model"]:
-            c = calc_cost(r["model"], r["inp"] or 0, r["out"] or 0,
-                          r["cr"] or 0, r["cc"] or 0)
+            c = _row_cost(r)
             print(f"    {r['model']:<28} sessions={r['sessions']:<4} "
                   f"events={fmt_tokens(r['events']):<7} est={fmt_cost(c)}")
         _hr()
@@ -133,15 +137,22 @@ def cmd_stats(args):
 
 def cmd_register(args):
     from .config import AgentConfig
-    from .sync import SyncClient, SyncError
+    from .sync import SyncClient, SyncError, warn_if_insecure
     ident = load_identity(display_name=args.display_name)
     ident.server_url = args.server.rstrip("/")
     ident.api_key = args.api_key
+
+    warning = warn_if_insecure(ident.server_url)
+    if warning:
+        print(warning)
     if args.display_name:
         ident.display_name = args.display_name
     save_identity(ident)
 
     if args.ws_url:
+        ws_warning = warn_if_insecure(args.ws_url)
+        if ws_warning:
+            print(ws_warning)
         cfg = AgentConfig.load()
         cfg.ws_enabled = True
         cfg.ws_url = args.ws_url

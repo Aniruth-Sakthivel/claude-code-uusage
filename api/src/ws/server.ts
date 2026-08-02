@@ -31,15 +31,23 @@ import { WebSocket, WebSocketServer } from "ws";
 import { config } from "../config.js";
 import { authenticateAgent } from "../core/auth-agent.js";
 import { loadPrincipal, verifySupabaseToken } from "../core/auth-user.js";
-import { visibleSystemIds } from "../core/rbac.js";
+import { CLIENT, visibleSystemIds } from "../core/rbac.js";
 import { systems } from "../db/schema.js";
+import * as chatRepo from "../repositories/chat.js";
+import * as commandsRepo from "../repositories/commands.js";
 import { ingestEvents } from "../repositories/usage.js";
+import * as boardRepo from "../repositories/whiteboard.js";
 import { closeWsDb, wsDb } from "./db.js";
 import {
   agentMessageIn,
   dashboardMessageIn,
   MAX_INBOUND_MESSAGE_BYTES,
+  WsErrorCode,
+  wsError,
   type AlertOut,
+  type BoardDeleteOut,
+  type BoardUpdateOut,
+  type ChatMessageOut,
   type SystemUpdatedOut,
 } from "./protocol.js";
 import { TokenBucket } from "./rateLimit.js";
@@ -53,7 +61,19 @@ const RATE_LIMIT_PER_SECOND = 1;
 
 type ConnMeta =
   | { role: "agent"; systemId: string; connectionId: string }
-  | { role: "dashboard"; userId: number; visibleSystemIds: string[] | null; connectionId: string };
+  | {
+      role: "dashboard";
+      userId: number;
+      userEmail: string;
+      // Client-portal accounts share this same socket for fleet events
+      // (which they see nothing on anyway, via visibleSystemIds) but must
+      // never reach chat/whiteboard — both cover the whole workspace, not
+      // just what's explicitly shared with them. See core/guards.ts requireStaff
+      // for the same cut on the REST side.
+      isStaff: boolean;
+      visibleSystemIds: string[] | null;
+      connectionId: string;
+    };
 
 function log(event: string, fields: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
@@ -91,11 +111,36 @@ class RealtimeHub {
     }
   }
 
-  /** Extension point: e.g. an admin action that asks a specific PC to scan now. */
-  sendCommandToAgent(systemId: string, action: "scan_now"): boolean {
+  /** Chat delivery: only the given users' *currently connected* dashboard
+   * sockets get it. Members without an open socket pick the message up via
+   * REST history on next load — see routes/chat.ts. */
+  broadcastToUsers(userIds: number[], payload: ChatMessageOut): void {
+    const body = JSON.stringify(payload);
+    const targets = new Set(userIds);
+    for (const [ws, meta] of this.clients) {
+      if (meta.role !== "dashboard" || !targets.has(meta.userId)) continue;
+      if (ws.readyState === WebSocket.OPEN) ws.send(body);
+    }
+  }
+
+  /** Whiteboard delivery: broadcast to *every* connected dashboard socket,
+   * not scoped to who has a given board open — there's no per-board
+   * subscribe/join step (that would need presence tracking this hub doesn't
+   * have), and PM data is open to every user anyway. The frontend filters by
+   * `board_id` and simply ignores frames for a board it isn't showing. */
+  broadcastToAllDashboards(payload: BoardUpdateOut | BoardDeleteOut): void {
+    const body = JSON.stringify(payload);
+    for (const [ws, meta] of this.clients) {
+      if (meta.role !== "dashboard") continue;
+      if (ws.readyState === WebSocket.OPEN) ws.send(body);
+    }
+  }
+
+  /** Push a specific command frame to a connected agent, if it has one open. */
+  sendCommandToAgent(systemId: string, command: { id: number; action: string; payload: unknown }): boolean {
     for (const [ws, meta] of this.clients) {
       if (meta.role === "agent" && meta.systemId === systemId && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "command", action }));
+        ws.send(JSON.stringify({ type: "command", ...command }));
         return true;
       }
     }
@@ -140,6 +185,8 @@ async function authenticateConnection(req: IncomingMessage): Promise<ConnMeta | 
       return {
         role: "dashboard",
         userId: principal.id,
+        userEmail: principal.email,
+        isStaff: principal.role !== CLIENT,
         visibleSystemIds: visibleSystemIds(principal),
         connectionId: randomUUID(),
       };
@@ -155,19 +202,40 @@ async function touchLastSeen(systemId: string): Promise<void> {
   await wsDb.update(systems).set({ lastSeenAt: new Date() }).where(eq(systems.systemId, systemId));
 }
 
+/** Real-time delivery: any command still pending for this system goes out
+ * over its open socket right away, same durable queue the REST check-in
+ * routes drain (see repositories/commands.ts). Marked delivered, not acked —
+ * the agent acks over REST once it has actually applied it. */
+async function flushPendingCommands(ws: WebSocket, systemId: string): Promise<void> {
+  const rows = await commandsRepo.listUndelivered(systemId, wsDb);
+  if (rows.length === 0) return;
+  for (const row of rows) {
+    ws.send(
+      JSON.stringify({
+        type: "command",
+        id: row.id,
+        action: row.action,
+        payload: JSON.parse(row.payload || "{}"),
+      }),
+    );
+  }
+  await commandsRepo.markDelivered(rows.map((r) => r.id), wsDb);
+}
+
 async function handleAgentMessage(ws: WebSocket, meta: Extract<ConnMeta, { role: "agent" }>, raw: string) {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     log("ws.malformed_json", { connectionId: meta.connectionId });
+    ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "malformed JSON")));
     return;
   }
 
   const result = agentMessageIn.safeParse(parsed);
   if (!result.success) {
     log("ws.invalid_message", { connectionId: meta.connectionId, issues: result.error.issues });
-    ws.send(JSON.stringify({ type: "error", message: "invalid message" }));
+    ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "invalid message")));
     return;
   }
 
@@ -177,10 +245,12 @@ async function handleAgentMessage(ws: WebSocket, meta: Extract<ConnMeta, { role:
   switch (message.type) {
     case "heartbeat": {
       await touchLastSeen(meta.systemId);
+      await flushPendingCommands(ws, meta.systemId);
       break;
     }
     case "scan_result": {
       await touchLastSeen(meta.systemId);
+      await flushPendingCommands(ws, meta.systemId);
       log("ws.scan_result", {
         systemId: meta.systemId,
         trigger: message.trigger,
@@ -227,6 +297,7 @@ async function handleAgentMessage(ws: WebSocket, meta: Extract<ConnMeta, { role:
         agentId: e.agent_id ?? null,
       })), wsDb);
       ws.send(JSON.stringify({ type: "ack", ...result }));
+      await flushPendingCommands(ws, meta.systemId);
       hub.broadcastToDashboards(meta.systemId, {
         type: "system_updated",
         system_id: meta.systemId,
@@ -238,16 +309,101 @@ async function handleAgentMessage(ws: WebSocket, meta: Extract<ConnMeta, { role:
   }
 }
 
-function handleDashboardMessage(ws: WebSocket, raw: string): void {
+async function handleDashboardMessage(
+  ws: WebSocket,
+  meta: Extract<ConnMeta, { role: "dashboard" }>,
+  raw: string,
+): Promise<void> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
+    ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "malformed JSON")));
     return;
   }
   const result = dashboardMessageIn.safeParse(parsed);
-  if (!result.success) return;
-  if (result.data.type === "ping") ws.send(JSON.stringify({ type: "pong" }));
+  if (!result.success) {
+    ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "invalid message")));
+    return;
+  }
+
+  const message = result.data;
+
+  if (message.type === "ping") {
+    ws.send(JSON.stringify({ type: "pong" }));
+    return;
+  }
+
+  if ((message.type === "chat_send" || message.type === "board_op") && !meta.isStaff) {
+    ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "not available to client accounts")));
+    return;
+  }
+
+  if (message.type === "chat_send") {
+    // Membership is re-checked here (never trust the client's claim that it
+    // belongs to channel_id), persisted, then fanned out only to that
+    // channel's *currently connected* dashboard sockets.
+    if (!(await chatRepo.isMember(message.channel_id, meta.userId, wsDb))) {
+      ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "not a member of this channel")));
+      return;
+    }
+    const saved = await chatRepo.createMessage(message.channel_id, meta.userId, meta.userEmail, message.body, wsDb);
+    const memberIds = await chatRepo.memberIdsOf(message.channel_id, wsDb);
+    const out: ChatMessageOut = {
+      type: "chat_message",
+      channel_id: message.channel_id,
+      message: {
+        id: saved.id,
+        author_user_id: saved.authorUserId,
+        author_email: saved.authorEmail,
+        body: saved.body,
+        created_at: saved.createdAt.toISOString(),
+      },
+    };
+    hub.broadcastToUsers(memberIds, out);
+    return;
+  }
+
+  // board_op: no per-board membership concept (see hub.broadcastToAllDashboards) —
+  // any signed-in user can edit any board, same posture as the rest of PM.
+  if (message.type === "board_op") {
+    if (!(await boardRepo.getBoard(message.board_id, wsDb))) {
+      ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "unknown board")));
+      return;
+    }
+
+    if (message.op.kind === "delete") {
+      await boardRepo.deleteElement(message.op.element_id, wsDb);
+      const out: BoardDeleteOut = {
+        type: "board_delete",
+        board_id: message.board_id,
+        element_id: message.op.element_id,
+      };
+      hub.broadcastToAllDashboards(out);
+      return;
+    }
+
+    const saved =
+      message.op.kind === "create"
+        ? await boardRepo.createElement(message.board_id, message.op.element_kind, message.op.data, meta.userId, wsDb)
+        : await boardRepo.updateElement(message.op.element_id, message.op.data, wsDb);
+    if (!saved) {
+      ws.send(JSON.stringify(wsError(WsErrorCode.INVALID_MESSAGE, "unknown element")));
+      return;
+    }
+    const out: BoardUpdateOut = {
+      type: "board_update",
+      board_id: message.board_id,
+      element: {
+        id: saved.id,
+        kind: saved.kind as "note" | "stroke",
+        data: JSON.parse(saved.data || "{}"),
+        created_at: saved.createdAt.toISOString(),
+        updated_at: saved.updatedAt.toISOString(),
+      },
+    };
+    hub.broadcastToAllDashboards(out);
+  }
 }
 
 export function startWsServer(port = config.WS_PORT): WebSocketServer {
@@ -273,7 +429,7 @@ export function startWsServer(port = config.WS_PORT): WebSocketServer {
 
     ws.on("message", async (data) => {
       if (!hub.allow(ws)) {
-        ws.send(JSON.stringify({ type: "error", message: "rate limit exceeded" }));
+        ws.send(JSON.stringify(wsError(WsErrorCode.RATE_LIMIT_EXCEEDED, "rate limit exceeded")));
         return;
       }
       const raw = data.toString();
@@ -281,13 +437,20 @@ export function startWsServer(port = config.WS_PORT): WebSocketServer {
         if (meta.role === "agent") {
           await handleAgentMessage(ws, meta, raw);
         } else {
-          handleDashboardMessage(ws, raw);
+          await handleDashboardMessage(ws, meta, raw);
         }
       } catch (err) {
+        // A handler threw (e.g. a transient DB error mid-sync) — never let
+        // that crash the socket. Log it server-side and tell the client
+        // generically; the raw error message stays out of the wire frame,
+        // same discipline as the REST error handler in index.ts.
         log("ws.handler_error", {
           connectionId: meta.connectionId,
           error: err instanceof Error ? err.message : String(err),
         });
+        ws.send(
+          JSON.stringify(wsError(WsErrorCode.INTERNAL_ERROR, "internal error, please retry")),
+        );
       }
     });
 

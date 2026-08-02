@@ -82,3 +82,11 @@ def save_identity(ident: Identity, config_path: Path | None = None) -> None:
     path = Path(config_path) if config_path else default_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(ident), indent=2), encoding="utf-8")
+    # This file holds api_key in plaintext (Supabase Auth is the source of
+    # truth for the agent's own credentials, not this file — but the key
+    # still grants API access, so keep it owner-readable only). Windows ACLs
+    # aren't POSIX mode bits, so this is a no-op there rather than an error.
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass

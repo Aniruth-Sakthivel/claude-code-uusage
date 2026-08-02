@@ -109,7 +109,7 @@ exists on a fresh install:
 
 | Field | Value |
 |---|---|
-| Email | `admin@claude-code-usage.local` |
+| Email | `admin@meterhouse.local` |
 | Password | `Admin@2026!` |
 | Role | Administrator |
 

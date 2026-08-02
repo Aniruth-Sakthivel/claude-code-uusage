@@ -22,12 +22,11 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 
-# Local mode is pure stdlib. `sync` (central mode) adds a small HTTP client dep
-# in a later phase via the [sync] extra.
+# Local mode AND central-mode sync are both pure stdlib (urllib) — see
+# meterhouse/sync.py. No [sync] extra: there is nothing to install for it.
 dependencies = []
 
 [project.optional-dependencies]
-sync = ["httpx>=0.27"]
 dev = ["pytest>=8.0"]
 build = ["pyinstaller>=6.0"]
 # Powers `meterhouse daemon`'s WebSocket push. Local/REST modes stay

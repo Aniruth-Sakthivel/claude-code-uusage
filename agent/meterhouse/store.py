@@ -19,10 +19,17 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 2
+
+# How long a writer waits on "database is locked" before giving up, on top of
+# sqlite3's own busy timeout below — covers the case where the daemon's
+# scheduled scan and a manual `meterhouse scan` CLI invocation race each other.
+_COMMIT_RETRY_ATTEMPTS = 5
+_COMMIT_RETRY_BASE_SECONDS = 0.2
 
 
 def default_db_path() -> Path:
@@ -40,7 +47,10 @@ class Store:
     def __init__(self, db_path: Path | str | None = None):
         self.db_path = Path(db_path) if db_path else default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path)
+        # timeout=30: how long sqlite3 itself blocks on a lock before raising
+        # OperationalError, so a concurrent writer (daemon vs. CLI) usually
+        # never needs the retry loop in `commit()` below at all.
+        self.conn = sqlite3.connect(self.db_path, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -122,7 +132,7 @@ class Store:
         cur = self.get_meta("schema_version")
         if cur is None or int(cur) < SCHEMA_VERSION:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
-        self.conn.commit()
+        self.commit()
 
     # ── meta ────────────────────────────────────────────────────────────────
     def get_meta(self, key: str):
@@ -133,7 +143,7 @@ class Store:
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
-        self.conn.commit()
+        self.commit()
 
     # ── file watermark ────────────────────────────────────────────────────────
     def get_scanned_file(self, path: str):
@@ -219,7 +229,7 @@ class Store:
         self.conn.executemany(
             "UPDATE prompt_events SET synced = 1 WHERE session_id = ? AND day = ?", pairs
         )
-        self.conn.commit()
+        self.commit()
 
     def prompt_total(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) AS n FROM prompt_events").fetchone()
@@ -258,10 +268,25 @@ class Store:
             "UPDATE session_titles SET synced = 1 WHERE session_id = ?",
             [(sid,) for sid in session_ids],
         )
-        self.conn.commit()
+        self.commit()
 
     def commit(self) -> None:
-        self.conn.commit()
+        """Commit with a short retry against a transient ``database is locked``.
+
+        The daemon's scheduled scan and a manually-run `meterhouse scan`/`sync`
+        can legitimately overlap for a moment; sqlite3's own busy timeout
+        (see ``timeout=30`` in ``__init__``) handles most of that, but a
+        commit can still lose the race right at the timeout boundary. Retry a
+        handful of times with a short backoff before giving up for real.
+        """
+        for attempt in range(1, _COMMIT_RETRY_ATTEMPTS + 1):
+            try:
+                self.conn.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == _COMMIT_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(_COMMIT_RETRY_BASE_SECONDS * attempt)
 
     def close(self) -> None:
         self.conn.close()
@@ -278,4 +303,4 @@ class Store:
         self.conn.executemany(
             "UPDATE usage_events SET synced = 1 WHERE event_id = ?",
             [(eid,) for eid in event_ids])
-        self.conn.commit()
+        self.commit()

@@ -28,6 +28,7 @@ import {
   timestamp,
   uniqueIndex,
   varchar,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 // ── roles ────────────────────────────────────────────────────────────────────
@@ -228,6 +229,492 @@ export const enrollTokens = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("enroll_tokens_expires_idx").on(t.expiresAt)],
+);
+
+// ── agent commands (fleet management) ─────────────────────────────────────────
+/**
+ * A command an operator queued for one PC's agent.
+ *
+ * Durable rather than fire-and-forget over the socket: the WS server and the
+ * REST API are separate processes (see ws/server.ts), and the agent itself
+ * may be offline or running in REST-only mode. So this table is the single
+ * source of truth for "what does this agent still need to do" — both the WS
+ * server (on heartbeat/scan_result) and the REST heartbeat/sync/register
+ * routes read pending rows for the calling system and hand them to the
+ * agent, which then acks by id. A command left `pending` simply gets handed
+ * out again next time that system checks in.
+ */
+export const agentCommands = pgTable(
+  "agent_commands",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    systemId: varchar("system_id", { length: 64 })
+      .notNull()
+      .references(() => systems.systemId, { onDelete: "cascade" }),
+    action: varchar("action", { length: 32 }).notNull(), // scan_now | pause | resume | set_config
+    payload: text("payload").notNull().default("{}"), // JSON, shape depends on action
+    status: varchar("status", { length: 16 }).notNull().default("pending"), // pending | acked | failed
+    createdByUserId: integer("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    ackedAt: timestamp("acked_at", { withTimezone: true }),
+    ackDetail: text("ack_detail").notNull().default(""),
+  },
+  (t) => [
+    // Every check-in queries "pending commands for this system" — the hot path.
+    index("agent_commands_system_status_idx").on(t.systemId, t.status),
+  ],
+);
+
+// ── initiatives (project management) ──────────────────────────────────────────
+/**
+ * Internal PM module: Initiative -> Milestone / Task -> Comment, plus Docs and
+ * an Activity feed. Deliberately never called "project" — that word is already
+ * the usage-tracking dimension (`usageEvents.projectName`, a folder-name label
+ * with no PM semantics); "Initiative" avoids colliding with it in the same nav.
+ *
+ * Open to every signed-in user (no capability gate, single org) — see
+ * services/pm.ts. `createdByUserId`/`authorUserId`/`actorUserId` all
+ * `onDelete: "set null"`, matching `systems.createdByUserId` and
+ * `agentCommands.createdByUserId`: removing a user must never cascade-delete
+ * their initiatives, tasks, or comments.
+ */
+export const initiatives = pgTable(
+  "initiatives",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    name: varchar("name", { length: 200 }).notNull(),
+    description: text("description").notNull().default(""), // markdown
+    status: varchar("status", { length: 16 }).notNull().default("active"), // active | on_hold | completed | archived
+    createdByUserId: integer("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("initiatives_status_idx").on(t.status),
+    index("initiatives_created_at_idx").on(t.createdAt),
+  ],
+);
+
+export const milestones = pgTable(
+  "milestones",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 200 }).notNull(),
+    dueDate: varchar("due_date", { length: 10 }), // YYYY-MM-DD, nullable — mirrors promptDaily.day
+    status: varchar("status", { length: 16 }).notNull().default("open"), // open | done
+    createdByUserId: integer("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("milestones_initiative_idx").on(t.initiativeId)],
+);
+
+// ── epics ────────────────────────────────────────────────────────────────────
+/** Groups related tasks within an initiative — one level above Task, same
+ * relationship a milestone has to tasks but purely organizational (no due
+ * date/deadline semantics of its own). */
+export const epics = pgTable(
+  "epics",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 200 }).notNull(),
+    description: text("description").notNull().default(""),
+    color: varchar("color", { length: 16 }).notNull().default("#6366f1"),
+    status: varchar("status", { length: 16 }).notNull().default("open"), // open | done
+    createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("epics_initiative_idx").on(t.initiativeId)],
+);
+
+// ── sprints ──────────────────────────────────────────────────────────────────
+/** Time-boxed pulls from the backlog. A task with `sprintId IS NULL` is in
+ * the backlog; setting one moves it onto that sprint without touching its
+ * board `status`, which stays the source of truth for the kanban column. */
+export const sprints = pgTable(
+  "sprints",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 200 }).notNull(),
+    startDate: varchar("start_date", { length: 10 }), // YYYY-MM-DD, nullable
+    endDate: varchar("end_date", { length: 10 }),
+    status: varchar("status", { length: 16 }).notNull().default("planned"), // planned | active | completed
+    createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sprints_initiative_idx").on(t.initiativeId)],
+);
+
+// ── board columns (custom workflow) ────────────────────────────────────────────
+/**
+ * Per-initiative status columns. Every initiative gets the three default
+ * columns (todo/in_progress/done) seeded at creation — see
+ * services/pm.ts `createInitiative` — but can add/rename/reorder/remove from
+ * there. `tasks.status` stores a column `key`, validated at the service
+ * layer against this table instead of a fixed Zod enum (the extensibility
+ * path already called out when the board was first built).
+ */
+export const boardColumns = pgTable(
+  "board_columns",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+    key: varchar("key", { length: 32 }).notNull(),
+    label: varchar("label", { length: 60 }).notNull(),
+    position: integer("position").notNull().default(0),
+    isDoneColumn: boolean("is_done_column").notNull().default(false), // drives "open task" counts/reports
+  },
+  (t) => [
+    uniqueIndex("board_columns_initiative_key_idx").on(t.initiativeId, t.key),
+    index("board_columns_initiative_position_idx").on(t.initiativeId, t.position),
+  ],
+);
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+    // Deliberate asymmetry vs. initiativeId: deleting a milestone unlinks its
+    // tasks rather than deleting them — a milestone is an organizational
+    // sub-grouping, not an ownership boundary.
+    milestoneId: integer("milestone_id").references(() => milestones.id, {
+      onDelete: "set null",
+    }),
+    epicId: integer("epic_id").references(() => epics.id, { onDelete: "set null" }),
+    sprintId: integer("sprint_id").references(() => sprints.id, { onDelete: "set null" }),
+    // Subtask parent — nullable self-reference. `AnyPgColumn` return type is
+    // required by Drizzle for self-referencing FKs (the column being defined
+    // can't be named directly inside its own table's definition).
+    parentTaskId: integer("parent_task_id").references((): AnyPgColumn => tasks.id, {
+      onDelete: "set null",
+    }),
+    title: varchar("title", { length: 300 }).notNull(),
+    description: text("description").notNull().default(""), // markdown
+    status: varchar("status", { length: 32 }).notNull().default("todo"), // a board_columns.key for this initiative
+    priority: varchar("priority", { length: 8 }).notNull().default("medium"), // low | medium | high | urgent
+    storyPoints: integer("story_points"), // nullable — not every task is estimated
+    assigneeUserId: integer("assignee_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdByUserId: integer("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    dueDate: varchar("due_date", { length: 10 }), // YYYY-MM-DD, nullable
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Hot path: board view queries "tasks for this initiative, grouped by status".
+    index("tasks_initiative_status_idx").on(t.initiativeId, t.status),
+    index("tasks_milestone_idx").on(t.milestoneId),
+    index("tasks_assignee_idx").on(t.assigneeUserId),
+    index("tasks_epic_idx").on(t.epicId),
+    index("tasks_sprint_idx").on(t.sprintId),
+    index("tasks_parent_idx").on(t.parentTaskId),
+  ],
+);
+
+// ── labels ───────────────────────────────────────────────────────────────────
+/** Workspace-wide reusable tags (not per-initiative) — "bug", "frontend",
+ * etc. mean the same thing across every project, same as Jira's global
+ * label pool. */
+export const labels = pgTable("labels", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 60 }).notNull().unique(),
+  color: varchar("color", { length: 16 }).notNull().default("#64748b"),
+});
+
+export const taskLabels = pgTable(
+  "task_labels",
+  {
+    taskId: integer("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    labelId: integer("label_id")
+      .notNull()
+      .references(() => labels.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.taskId, t.labelId] }), index("task_labels_label_idx").on(t.labelId)],
+);
+
+export const taskComments = pgTable(
+  "task_comments",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    taskId: integer("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    authorUserId: integer("author_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    authorEmail: varchar("author_email", { length: 255 }).notNull().default(""), // denormalized, matches auditLogs.actorEmail
+    body: text("body").notNull(), // markdown
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("task_comments_task_idx").on(t.taskId, t.createdAt)],
+);
+
+export const docs = pgTable(
+  "docs",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    // Nullable: a doc tied to an initiative is per-project documentation; a
+    // doc with no initiative is a workspace-wide wiki page (see
+    // routes/pm.ts `/workspace/docs`).
+    initiativeId: integer("initiative_id").references(() => initiatives.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 200 }).notNull(),
+    body: text("body").notNull().default(""), // markdown
+    createdByUserId: integer("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("docs_initiative_idx").on(t.initiativeId)],
+);
+
+/**
+ * Dedicated PM activity feed — deliberately not the existing `auditLogs`
+ * table. `auditLogs` is a security/ops artifact for capability-gated admin
+ * pages, keyed to a free-text `target`; this is a product surface shown to
+ * every user per-initiative, needs structured `entityType`/`entityId` for
+ * deep-linking, and would otherwise mix high-volume PM chatter into a
+ * compliance-sensitive table.
+ */
+export const pmActivity = pgTable(
+  "pm_activity",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+    actorUserId: integer("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    actorEmail: varchar("actor_email", { length: 255 }).notNull().default(""),
+    // e.g. "initiative.created", "task.created", "task.status_changed",
+    // "task.commented", "milestone.completed", "doc.updated"
+    action: varchar("action", { length: 64 }).notNull(),
+    // Polymorphic pointer to the entity the event is about, so the feed can
+    // deep-link ("Task #42") without a join per row.
+    entityType: varchar("entity_type", { length: 16 }).notNull(), // initiative | milestone | task | doc | comment
+    entityId: integer("entity_id").notNull(),
+    detail: text("detail").notNull().default(""), // short human string, e.g. "todo -> in_progress"
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Hot path: "activity feed for this initiative", newest first.
+    index("pm_activity_initiative_at_idx").on(t.initiativeId, t.at),
+  ],
+);
+
+// ── notifications ──────────────────────────────────────────────────────────────
+/**
+ * In-app notifications, one row per recipient per event. Unlike PM activity
+ * (a per-initiative public feed), this is per-user and privately scoped —
+ * `userId` cascades on delete (the notification is meaningless without its
+ * owner), unlike the `set null` pattern used for authorship columns
+ * elsewhere in this file.
+ */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 32 }).notNull(), // task_assigned | task_commented | chat_mention | ...
+    title: varchar("title", { length: 300 }).notNull(),
+    body: text("body").notNull().default(""),
+    entityType: varchar("entity_type", { length: 16 }).notNull().default(""),
+    entityId: integer("entity_id"),
+    link: varchar("link", { length: 300 }).notNull().default(""), // relative frontend path
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Hot path: "unread notifications for this user", newest first.
+    index("notifications_user_read_idx").on(t.userId, t.readAt, t.createdAt),
+  ],
+);
+
+// ── team chat ──────────────────────────────────────────────────────────────────
+/**
+ * Channels (`kind: "channel"`) and 1:1 DMs (`kind: "dm"`, always exactly two
+ * members, `name` left blank — the frontend derives the display name from
+ * the other member) share one table rather than two, since messages/
+ * membership are structurally identical for both.
+ */
+export const channels = pgTable(
+  "channels",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    name: varchar("name", { length: 120 }).notNull().default(""),
+    kind: varchar("kind", { length: 8 }).notNull().default("channel"), // channel | dm
+    createdByUserId: integer("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("channels_kind_idx").on(t.kind)],
+);
+
+export const channelMembers = pgTable(
+  "channel_members",
+  {
+    channelId: integer("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.channelId, t.userId] }),
+    // Hot path: "which channels is this user in" (list view) and membership checks.
+    index("channel_members_user_idx").on(t.userId),
+  ],
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    channelId: integer("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    authorUserId: integer("author_user_id").references(() => users.id, { onDelete: "set null" }),
+    authorEmail: varchar("author_email", { length: 255 }).notNull().default(""), // denormalized, matches auditLogs.actorEmail
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chat_messages_channel_idx").on(t.channelId, t.createdAt)],
+);
+
+// ── automation (workspace) ──────────────────────────────────────────────────
+/**
+ * Trigger -> action rules, evaluated in-process at the same points
+ * services/pm.ts already writes activity/notification rows — no queue
+ * (BullMQ/Redis), per the "hold off on new infra" decision. Fine at this
+ * event volume; a queue only earns its keep once actions need retries or
+ * cross-process fan-out.
+ */
+export const automationRules = pgTable(
+  "automation_rules",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    name: varchar("name", { length: 200 }).notNull(),
+    // task_created | task_status_changed | task_assigned | task_commented
+    triggerType: varchar("trigger_type", { length: 32 }).notNull(),
+    triggerFilter: text("trigger_filter").notNull().default("{}"), // JSON, shape depends on trigger
+    // notify_user | notify_assignee | post_to_channel | change_task_status
+    actionType: varchar("action_type", { length: 32 }).notNull(),
+    actionConfig: text("action_config").notNull().default("{}"), // JSON, shape depends on action
+    enabled: boolean("enabled").notNull().default(true),
+    createdByUserId: integer("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("automation_rules_trigger_idx").on(t.triggerType, t.enabled)],
+);
+
+/** Execution log — lets an operator see whether a rule actually fired and
+ * what it did, instead of trusting it silently. */
+export const automationRuns = pgTable(
+  "automation_runs",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    ruleId: integer("rule_id").references(() => automationRules.id, { onDelete: "set null" }),
+    ruleName: varchar("rule_name", { length: 200 }).notNull().default(""), // denormalized: survives rule deletion
+    entityType: varchar("entity_type", { length: 16 }).notNull().default(""),
+    entityId: integer("entity_id"),
+    status: varchar("status", { length: 16 }).notNull().default("ok"), // ok | error
+    detail: text("detail").notNull().default(""),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("automation_runs_at_idx").on(t.at)],
+);
+
+// ── whiteboard ───────────────────────────────────────────────────────────────
+/**
+ * Infinite-canvas boards: sticky notes + freehand strokes. Workspace-wide
+ * (a list of named boards, not tied to an initiative), same scope as Chat/
+ * Wiki. Real-time sync goes entirely over the dashboard WebSocket (see
+ * ws/server.ts `board_op`) rather than REST + a separate broadcast step —
+ * unlike chat (which has a REST fallback), a board has no meaningful
+ * "offline send," so there's no reason to duplicate the write path.
+ *
+ * Explicit v1 cuts: no live cursors/presence, no resize handles, no
+ * undo/redo, no per-board access control (same open-to-everyone posture as
+ * the rest of the PM module).
+ */
+export const whiteboards = pgTable("whiteboards", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 200 }).notNull(),
+  createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const whiteboardElements = pgTable(
+  "whiteboard_elements",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    boardId: integer("board_id")
+      .notNull()
+      .references(() => whiteboards.id, { onDelete: "cascade" }),
+    kind: varchar("kind", { length: 8 }).notNull(), // note | stroke
+    data: text("data").notNull(), // JSON, shape depends on kind (see ws/server.ts)
+    createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("whiteboard_elements_board_idx").on(t.boardId)],
+);
+
+// ── client portal (initiative sharing) ────────────────────────────────────────
+/**
+ * Which initiatives a `client`-role user may see — mirrors `userSystems`'
+ * shape and role exactly (composite PK join table, additive grant), applied
+ * to the PM domain instead of the fleet. See core/rbac.ts CLIENT and
+ * services/pm.ts's role branch for how this is enforced.
+ */
+export const initiativeClients = pgTable(
+  "initiative_clients",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    initiativeId: integer("initiative_id")
+      .notNull()
+      .references(() => initiatives.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.initiativeId] }),
+    index("initiative_clients_initiative_idx").on(t.initiativeId),
+  ],
 );
 
 // ── sync logs ─────────────────────────────────────────────────────────────────
@@ -466,3 +953,24 @@ export type UsageEventRow = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
 export type EnrollTokenRow = typeof enrollTokens.$inferSelect;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
+export type AgentCommandRow = typeof agentCommands.$inferSelect;
+export type InitiativeRow = typeof initiatives.$inferSelect;
+export type MilestoneRow = typeof milestones.$inferSelect;
+export type TaskRow = typeof tasks.$inferSelect;
+export type TaskCommentRow = typeof taskComments.$inferSelect;
+export type DocRow = typeof docs.$inferSelect;
+export type PmActivityRow = typeof pmActivity.$inferSelect;
+export type NotificationRow = typeof notifications.$inferSelect;
+export type ChannelRow = typeof channels.$inferSelect;
+export type ChannelMemberRow = typeof channelMembers.$inferSelect;
+export type ChatMessageRow = typeof chatMessages.$inferSelect;
+export type AutomationRuleRow = typeof automationRules.$inferSelect;
+export type AutomationRunRow = typeof automationRuns.$inferSelect;
+export type WhiteboardRow = typeof whiteboards.$inferSelect;
+export type WhiteboardElementRow = typeof whiteboardElements.$inferSelect;
+export type InitiativeClientRow = typeof initiativeClients.$inferSelect;
+export type EpicRow = typeof epics.$inferSelect;
+export type SprintRow = typeof sprints.$inferSelect;
+export type BoardColumnRow = typeof boardColumns.$inferSelect;
+export type LabelRow = typeof labels.$inferSelect;
+export type TaskLabelRow = typeof taskLabels.$inferSelect;

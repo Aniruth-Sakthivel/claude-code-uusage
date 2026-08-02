@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Bell, Building2, ChevronRight, Compass, Cpu, FolderKanban, KeyRound, LayoutGrid, Menu, MonitorPlay, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
+import { Building2, ChevronRight, Compass, Cpu, FolderKanban, KeyRound, LayoutGrid, ListTodo, Menu, MonitorPlay, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 
 import { useAuth } from "../auth/AuthContext";
 import type { Capability } from "../api/types";
+import { NotificationsBell } from "./NotificationsBell";
 import { ThemeToggle } from "../lib/theme";
 
 interface NavItem {
@@ -16,6 +17,7 @@ interface NavItem {
 
 const MONITOR: NavItem[] = [
   { to: "/dashboard", label: "Overview", end: true, icon: LayoutGrid },
+  { to: "/workspace", label: "Workspace", icon: ListTodo },
   { to: "/systems", label: "Systems", icon: Cpu },
   { to: "/accounts", label: "Claude accounts", cap: "view_all", icon: KeyRound },
   { to: "/projects", label: "Projects", icon: FolderKanban },
@@ -181,9 +183,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 <Search className="h-4 w-4" />
                 <span>Search</span>
               </div>
-              <button className="rounded-full border border-line bg-surface-2 p-2 text-ink-2">
-                <Bell className="h-4 w-4" />
-              </button>
+              <NotificationsBell />
               <ThemeToggle />
             </div>
           </div>

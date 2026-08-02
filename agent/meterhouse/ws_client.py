@@ -60,6 +60,9 @@ class WSClient:
         self._ws = None
         self._stopped = asyncio.Event()
         self._connected = asyncio.Event()
+        # Wakes the sender loop the moment a message is queued, instead of it
+        # polling on a fixed interval while idle.
+        self._has_message = asyncio.Event()
 
     def send(self, message: dict) -> None:
         """Non-blocking enqueue. Flushed immediately if connected, else queued."""
@@ -69,6 +72,7 @@ class WSClient:
             return
         self._queue.append(message)
         self._health.offline_queue_depth = len(self._queue)
+        self._has_message.set()
 
     async def stop(self) -> None:
         self._stopped.set()
@@ -156,8 +160,17 @@ class WSClient:
                 message = self._queue.popleft()
                 self._health.offline_queue_depth = len(self._queue)
                 await ws.send(json.dumps(message))
-            else:
-                await asyncio.sleep(0.2)
+                continue
+
+            # Wake as soon as `send()` queues something, or at the next
+            # heartbeat deadline — whichever comes first — rather than
+            # polling on a fixed interval.
+            remaining = heartbeat_interval - (time.monotonic() - last_heartbeat)
+            try:
+                await asyncio.wait_for(self._has_message.wait(), timeout=max(remaining, 0))
+            except asyncio.TimeoutError:
+                pass
+            self._has_message.clear()
 
     async def _receiver_loop(self, ws) -> None:
         async for raw in ws:

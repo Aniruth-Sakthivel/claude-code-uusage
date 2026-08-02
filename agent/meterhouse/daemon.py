@@ -57,18 +57,100 @@ class Daemon:
         self._health = HealthState()
         self._scan_lock = asyncio.Lock()
         self._stop = asyncio.Event()
+        self._paused = asyncio.Event()
         self._ws = None
 
     async def _run_command(self, message: dict) -> None:
-        """Handle a server-pushed command, e.g. `{"type":"command","action":"scan_now"}`."""
+        """Handle a server-pushed command, e.g.
+        `{"type":"command","id":7,"action":"scan_now","payload":{}}`.
+
+        Called for commands delivered either over WS (ws_client's receiver
+        loop) or picked out of a REST heartbeat/sync response (see
+        `_poll_commands`) — either way this is the single execution path, and
+        acks back over REST regardless of which transport delivered it.
+        """
+        command_id = message.get("id")
+        status, detail = await self._execute_command(message)
+        if command_id is not None:
+            self._ack_command(command_id, status, detail)
+
+    async def _execute_command(self, message: dict) -> tuple[str, str]:
         action = message.get("action")
+        payload = message.get("payload") or {}
+
         if action == "scan_now":
             log.info("scan_now command received")
             asyncio.create_task(self._scan_once(trigger="command"))
-        else:
-            log.warning("unknown command", extra={"action": action})
+            return "acked", "scan queued"
+
+        if action == "pause":
+            self._paused.set()
+            log.info("daemon paused by command")
+            return "acked", "scan loop paused"
+
+        if action == "resume":
+            self._paused.clear()
+            log.info("daemon resumed by command")
+            return "acked", "scan loop resumed"
+
+        if action == "set_config":
+            try:
+                applied = self._apply_config_patch(payload)
+            except Exception as exc:  # noqa: BLE001 - report, don't crash the daemon
+                log.exception("set_config command failed")
+                return "failed", f"{type(exc).__name__}: {exc}"
+            detail = f"applied: {', '.join(applied)}" if applied else "no recognized fields"
+            log.info("config updated by command", extra={"fields": applied})
+            return "acked", detail
+
+        log.warning("unknown command", extra={"action": action})
+        return "failed", f"unknown action: {action}"
+
+    def _apply_config_patch(self, payload: dict) -> list[str]:
+        """Apply an allowlisted subset of `AgentConfig` fields and persist.
+
+        `scan_interval_seconds` takes effect on the very next tick — the scan
+        loop re-reads `self._cfg.scan_interval_seconds` each iteration, and
+        this mutates the same config object the loop holds. `ws_enabled` /
+        `ws_url` are read only at daemon startup, so those need a restart to
+        take effect; still applied and saved so the next start picks them up.
+        """
+        allowed = {
+            "scan_interval_seconds",
+            "ws_enabled",
+            "session_titles_enabled",
+            "account_reporting_enabled",
+        }
+        applied = []
+        for key, value in payload.items():
+            if key not in allowed:
+                continue
+            setattr(self._cfg, key, value)
+            applied.append(key)
+        if applied:
+            self._cfg.validated()
+            self._cfg.save()
+        return applied
+
+    def _ack_command(self, command_id, status: str, detail: str) -> None:
+        if not self._ident.server_url or not self._ident.api_key:
+            return
+        from .sync import SyncClient, SyncError
+
+        try:
+            SyncClient(
+                self._ident.server_url, self._ident.api_key, timeout=self._cfg.http_timeout_seconds
+            ).ack_command(command_id, status, detail)
+        except SyncError as exc:
+            log.warning("command ack failed", extra={"command_id": command_id, "reason": str(exc)})
 
     async def _scan_once(self, trigger: str) -> dict | None:
+        # `pause`/`resume` commands only affect the schedule; a `scan_now`
+        # command (trigger="command") still runs on request even while paused.
+        if trigger == "schedule" and self._paused.is_set():
+            log.debug("scan skipped: daemon paused")
+            return None
+
         if self._scan_lock.locked():
             log.info("scan already running, skipping this tick", extra={"trigger": trigger})
             return None
@@ -113,18 +195,23 @@ class Daemon:
                     self._ws.send({"type": "alert", "level": "error", "message": reason})
                 return None
             finally:
-                self._health.save()
+                # Best-effort: a health file the daemon can't write (e.g. disk
+                # full, permissions) must never take down the scan loop itself.
+                try:
+                    self._health.save()
+                except Exception:  # noqa: BLE001
+                    log.exception("failed to persist health state")
 
     async def _sync_once(self) -> None:
         if not self._ident.server_url or not self._ident.api_key:
             return  # local-only mode: scanning still ran, nothing to push over REST
         from .sync import SyncClient, SyncError, sync_store
 
+        client = SyncClient(
+            self._ident.server_url, self._ident.api_key, timeout=self._cfg.http_timeout_seconds
+        )
         store = Store(self._db_path)
         try:
-            client = SyncClient(
-                self._ident.server_url, self._ident.api_key, timeout=self._cfg.http_timeout_seconds
-            )
             sync_store(store, client, verbose=False,
                        send_titles=self._cfg.session_titles_enabled)
         except SyncError as exc:
@@ -132,9 +219,25 @@ class Daemon:
         finally:
             store.close()
 
+        # Runs even when there was nothing to sync above: a REST-only agent
+        # (no WebSocket) otherwise has no path to ever receive a queued
+        # command on an idle machine.
+        await self._poll_commands(client)
+
         # Account reporting runs after usage sync and swallows its own errors:
         # this is an optional extra and must never cost us a usage push.
         await self._report_account_once()
+
+    async def _poll_commands(self, client) -> None:
+        from .sync import SyncError
+
+        try:
+            resp = client.heartbeat()
+        except SyncError as exc:
+            log.warning("heartbeat failed, will retry next cycle", extra={"reason": str(exc)})
+            return
+        for command in resp.get("commands", []):
+            await self._run_command(command)
 
     async def _report_account_once(self) -> None:
         if not self._cfg.account_reporting_enabled:

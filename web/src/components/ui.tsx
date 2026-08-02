@@ -451,6 +451,60 @@ export function Td({
 
 // ── dialog ────────────────────────────────────────────────────────────────────
 /**
+ * General-purpose modal — arbitrary content, not just a confirm/cancel pair.
+ * `ConfirmDialog` below covers the common case; this is for panels like
+ * per-system agent controls that need a form and a table inside.
+ */
+export function Modal({
+  open,
+  title,
+  hint,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  hint?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-[var(--shadow)]"
+        style={{ animation: "cf-fade-in 0.15s ease-out" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">{title}</h2>
+            {hint && <p className="mt-1 text-sm text-muted">{hint}</p>}
+          </div>
+          <Button variant="subtle" size="sm" onClick={onClose} aria-label="Close">
+            Close
+          </Button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Confirmation dialog. Destructive actions (delete user, revoke key) had no
  * confirmation at all before.
  */

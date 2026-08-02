@@ -3,7 +3,7 @@
  * Keep them in sync when the backend contract changes.
  */
 
-export type Role = "admin" | "manager" | "developer" | "viewer";
+export type Role = "admin" | "manager" | "developer" | "viewer" | "client";
 
 export type Capability =
   | "view_all"
@@ -48,6 +48,201 @@ export interface SystemRow {
 export interface SystemCreated {
   system: SystemRow;
   api_key: string;
+}
+
+// ── project management (initiatives) ────────────────────────────────────────────
+export type InitiativeStatus = "active" | "on_hold" | "completed" | "archived";
+export type TaskStatus = "todo" | "in_progress" | "done";
+export type MilestoneStatus = "open" | "done";
+
+export interface Initiative {
+  id: number;
+  name: string;
+  description: string;
+  status: InitiativeStatus;
+  created_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+  task_count: number;
+  open_task_count: number;
+}
+
+export interface Milestone {
+  id: number;
+  initiative_id: number;
+  name: string;
+  due_date: string | null;
+  status: MilestoneStatus;
+  created_at: string;
+}
+
+export interface Task {
+  id: number;
+  initiative_id: number;
+  milestone_id: number | null;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  assignee_user_id: number | null;
+  created_by_user_id: number | null;
+  due_date: string | null;
+  created_at: string;
+  updated_at: string;
+  comment_count: number;
+}
+
+export interface TaskComment {
+  id: number;
+  task_id: number;
+  author_user_id: number | null;
+  author_email: string;
+  body: string;
+  created_at: string;
+}
+
+export interface Doc {
+  id: number;
+  initiative_id: number | null;
+  title: string;
+  body: string;
+  created_by_user_id: number | null;
+  updated_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Minimal, unprivileged user listing for the assignee picker — see
+ * `GET /api/v1/pm/assignees` (deliberately not the capability-gated
+ * `/admin/users`, since PM is open to every signed-in user). */
+export interface Assignee {
+  id: number;
+  email: string;
+  full_name: string;
+}
+
+// ── team chat ────────────────────────────────────────────────────────────────
+export type ChannelKind = "channel" | "dm";
+
+export interface Channel {
+  id: number;
+  name: string;
+  kind: ChannelKind;
+  member_ids: number[];
+  last_message_at: string | null;
+}
+
+export interface ChatMessage {
+  id: number;
+  channel_id: number;
+  author_user_id: number | null;
+  author_email: string;
+  body: string;
+  created_at: string;
+}
+
+export interface WhiteboardSummary {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
+export type AutomationTrigger =
+  | "task_created"
+  | "task_status_changed"
+  | "task_assigned"
+  | "task_commented";
+export type AutomationAction = "notify_user" | "notify_assignee" | "post_to_channel" | "change_task_status";
+
+export interface AutomationRule {
+  id: number;
+  name: string;
+  trigger_type: AutomationTrigger;
+  trigger_filter: Record<string, unknown>;
+  action_type: AutomationAction;
+  action_config: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface AutomationRun {
+  id: number;
+  rule_id: number | null;
+  rule_name: string;
+  entity_type: string;
+  entity_id: number | null;
+  status: "ok" | "error";
+  detail: string;
+  at: string;
+}
+
+export interface ReportsSummary {
+  initiatives_by_status: { status: string; n: number }[];
+  tasks_by_status: { status: string; n: number }[];
+  workload: { user_id: number; email: string; full_name: string; n: number }[];
+  completed_by_day: { day: string; n: number }[];
+}
+
+export interface SearchResult {
+  kind: "initiative" | "task" | "doc" | "channel";
+  id: number;
+  title: string;
+  subtitle: string;
+  link: string;
+}
+
+export interface CalendarItem {
+  kind: "task" | "milestone";
+  id: number;
+  initiative_id: number;
+  initiative_name: string;
+  title: string;
+  due_date: string;
+  status: string;
+}
+
+export interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  body: string;
+  entity_type: string;
+  entity_id: number | null;
+  link: string;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface PmActivityEntry {
+  id: number;
+  actor_email: string;
+  action: string;
+  entity_type: string;
+  entity_id: number;
+  detail: string;
+  at: string;
+}
+
+// ── fleet management (agent commands) ──────────────────────────────────────────
+export type CommandAction = "scan_now" | "pause" | "resume" | "set_config";
+
+/** Only the tunables it's safe to push remotely — mirrors the server allowlist. */
+export interface SetConfigPayload {
+  scan_interval_seconds?: number;
+  ws_enabled?: boolean;
+  session_titles_enabled?: boolean;
+  account_reporting_enabled?: boolean;
+}
+
+export interface AgentCommand {
+  id: number;
+  system_id: string;
+  action: CommandAction;
+  payload: SetConfigPayload;
+  status: "pending" | "acked" | "failed";
+  created_at: string;
+  delivered_at: string | null;
+  acked_at: string | null;
+  ack_detail: string;
 }
 
 export interface RankingItem {

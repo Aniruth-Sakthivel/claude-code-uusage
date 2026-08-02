@@ -14,7 +14,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import WebSocket from "ws";
 
 import { config } from "../config.js";
-import { badRequest } from "./errors.js";
+import { badRequest, ServiceUnavailableError } from "./errors.js";
+import { retryWithBackoff } from "./retry.js";
 
 // supabase-js unconditionally constructs a realtime client, which requires a
 // global WebSocket (native only on Node 22+). Netlify Functions run Node 20,
@@ -34,8 +35,6 @@ export function getAdminClient(): SupabaseClient {
   return cached;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 /**
  * GoTrue intermittently returns a signing error ("unrecognized JWT kid") when
  * admin calls arrive in quick succession. It is transient, so retry briefly
@@ -54,22 +53,29 @@ export async function createAuthUser(
   password: string,
   fullName = "",
 ): Promise<string> {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const { data, error } = await getAdminClient().auth.admin.createUser({
-      email,
-      password,
-      // Pre-confirmed: an admin set this password, so there is nothing to
-      // verify by email — and it avoids depending on a configured mailer.
-      email_confirm: true,
-      user_metadata: { full_name: fullName },
-    });
-    if (!error && data.user) return data.user.id;
-    if (attempt === 3 || !isTransientAuthError(error?.message)) {
-      throw badRequest(`Could not create auth user: ${error?.message ?? "unknown error"}`);
-    }
-    await sleep(attempt * 1000);
-  }
-  throw badRequest("Could not create auth user");
+  return retryWithBackoff(
+    async () => {
+      const { data, error } = await getAdminClient().auth.admin.createUser({
+        email,
+        password,
+        // Pre-confirmed: an admin set this password, so there is nothing to
+        // verify by email — and it avoids depending on a configured mailer.
+        email_confirm: true,
+        user_metadata: { full_name: fullName },
+      });
+      if (!error && data.user) return data.user.id;
+      const message = error?.message;
+      if (isTransientAuthError(message)) {
+        // Caught below by shouldRetry, which decides whether to back off and
+        // try again or give up — see retryWithBackoff.
+        throw new ServiceUnavailableError(`Could not create auth user: ${message ?? "unknown error"}`);
+      }
+      // Not transient (bad input, etc.) — fail immediately, retrying a
+      // deterministic failure would just add latency for no benefit.
+      throw badRequest(`Could not create auth user: ${message ?? "unknown error"}`);
+    },
+    { retries: 3, baseDelayMs: 1000, shouldRetry: (err) => err instanceof ServiceUnavailableError },
+  );
 }
 
 /**

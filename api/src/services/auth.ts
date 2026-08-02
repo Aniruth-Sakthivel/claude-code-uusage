@@ -5,9 +5,11 @@
  * role and system scoping. "Registration" here means creating that local row the
  * first time a Supabase identity appears.
  *
- * First-run rule: the first Supabase user ever seen becomes admin. After that,
- * accounts are created by an admin — a Supabase-authenticated user with no local
- * row has no account, and gets a clear message rather than a bare 403.
+ * First-run rule: the very first Supabase user ever seen becomes admin, so the
+ * instance can be unlocked. After that, self-service signup (if the admin has
+ * turned it on) lands in the configured `defaultRole` — never admin — and with
+ * it off, a Supabase-authenticated user with no local row gets a clear message
+ * rather than a bare 403.
  */
 
 import { eq } from "drizzle-orm";
@@ -72,23 +74,30 @@ export async function provisionUser(input: ProvisionInput): Promise<Principal> {
     return toPrincipal(byEmail.id);
   }
 
-  if (!(await registrationOpen())) {
+  // Bootstrap (no users at all) always grants admin — otherwise nobody could
+  // ever unlock the instance. Every later self-signup is gated on the admin's
+  // `registrationOpen` setting and lands in `defaultRole`, NOT admin — an open
+  // instance must not hand out full access to anyone who signs up.
+  const isBootstrap = (await adminRepo.countUsers()) === 0;
+  const settings = isBootstrap ? null : await getSettings();
+
+  if (!isBootstrap && !settings!.registrationOpen) {
     throw forbidden(
       "No account exists for this login. Ask an administrator to invite you.",
     );
   }
 
-  // First run — this identity becomes the administrator.
-  const adminRole = await adminRepo.findRoleByName("admin");
-  if (!adminRole) throw badRequest("Roles are not seeded; run migrations first.");
+  const roleName: Role = isBootstrap ? "admin" : settings!.defaultRole;
+  const role = await adminRepo.findRoleByName(roleName);
+  if (!role) throw badRequest(`Role '${roleName}' is not seeded; run migrations first.`);
 
   const inserted = await db
     .insert(users)
     .values({
       email: input.email,
-      fullName: input.fullName || "Administrator",
+      fullName: input.fullName || (isBootstrap ? "Administrator" : ""),
       supabaseUserId: input.supabaseUserId,
-      roleId: adminRole.id,
+      roleId: role.id,
     })
     .returning({ id: users.id });
 
@@ -97,9 +106,9 @@ export async function provisionUser(input: ProvisionInput): Promise<Principal> {
   await adminRepo.writeAudit({
     actorUserId: newId,
     actorEmail: input.email,
-    action: "auth.register_admin",
+    action: isBootstrap ? "auth.register_admin" : "auth.self_register",
     target: input.email,
-    detail: "initial administrator",
+    detail: isBootstrap ? "initial administrator" : `self-registered as ${roleName}`,
     ip: input.ip,
     userAgent: input.userAgent,
   });

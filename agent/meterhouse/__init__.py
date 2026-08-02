@@ -10,7 +10,15 @@ observed from real transcripts (see docs/UPSTREAM_AUDIT.md for the format).
 
 from __future__ import annotations
 
-__version__ = "0.1.2"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    # Single source of truth: pyproject.toml's [project] version, so an
+    # installed wheel/sdist and `__version__` can never drift apart.
+    __version__ = _pkg_version("meterhouse-rotor")
+except PackageNotFoundError:
+    # Running from a source checkout without an editable install.
+    __version__ = "0.0.0+dev"
 
 from .cli import build_parser, main as cli_main
 from .config import AgentConfig
@@ -66,13 +74,25 @@ class Agent:
         display_name: str | None = None,
         ws_url: str | None = None,
     ) -> dict:
+        from .sync import warn_if_insecure
+
         self.identity.server_url = server_url.rstrip("/")
         self.identity.api_key = api_key
+        warning = warn_if_insecure(self.identity.server_url)
+        if warning:
+            import warnings
+
+            warnings.warn(warning, stacklevel=2)
         if display_name:
             self.identity.display_name = display_name
         save_identity(self.identity, self.config_path)
 
         if ws_url:
+            ws_warning = warn_if_insecure(ws_url)
+            if ws_warning:
+                import warnings
+
+                warnings.warn(ws_warning, stacklevel=2)
             self.config.ws_enabled = True
             self.config.ws_url = ws_url
             self.config.save()

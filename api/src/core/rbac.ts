@@ -15,8 +15,16 @@ export const ADMIN = "admin";
 export const MANAGER = "manager";
 export const DEVELOPER = "developer";
 export const VIEWER = "viewer";
+// External, not internal staff — see repositories/pm.ts `initiativeClients`
+// and services/pm.ts's role check. Zero fleet capabilities and zero access
+// to the open-to-everyone PM posture other roles get: a client only ever
+// sees the specific initiatives explicitly shared with them, read-only plus
+// commenting, never chat/wiki/reports/automations/whiteboard/other
+// initiatives. Provisioned through the same admin invite flow as every
+// other role — no separate auth system.
+export const CLIENT = "client";
 
-export const ROLES = [ADMIN, MANAGER, DEVELOPER, VIEWER] as const;
+export const ROLES = [ADMIN, MANAGER, DEVELOPER, VIEWER, CLIENT] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
@@ -24,6 +32,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   [MANAGER]: "View all systems, analytics, and reports; no user/key management.",
   [DEVELOPER]: "View only assigned systems and their usage.",
   [VIEWER]: "Read-only access to all systems.",
+  [CLIENT]: "External client portal: read-only access to initiatives shared with them, plus commenting.",
 };
 
 export type Capability =
@@ -55,6 +64,7 @@ export const CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   [MANAGER]: new Set(["view_all", "export", "connect_own_pc"]),
   [DEVELOPER]: new Set(["connect_own_pc"]),
   [VIEWER]: new Set(["view_all", "connect_own_pc"]),
+  [CLIENT]: new Set([]),
 };
 
 export interface Principal {

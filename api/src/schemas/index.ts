@@ -60,6 +60,53 @@ export const systemCreated = z.object({
   api_key: z.string(),
 });
 
+// ── agent commands (fleet management) ─────────────────────────────────────────
+export const commandAction = z.enum(["scan_now", "pause", "resume", "set_config"]);
+
+/** Only the tunables it's safe for an operator to push remotely. */
+export const commandSetConfigPayload = z
+  .object({
+    scan_interval_seconds: z.number().int().min(5).max(86_400).optional(),
+    ws_enabled: z.boolean().optional(),
+    session_titles_enabled: z.boolean().optional(),
+    account_reporting_enabled: z.boolean().optional(),
+  })
+  .strict();
+
+export const commandCreate = z.object({
+  action: commandAction,
+  payload: commandSetConfigPayload.default({}),
+});
+
+export const commandOut = z.object({
+  id: z.number().int(),
+  system_id: z.string(),
+  action: commandAction,
+  payload: z.record(z.string(), z.unknown()),
+  status: z.enum(["pending", "acked", "failed"]),
+  created_at: z.string(),
+  delivered_at: z.string().nullable(),
+  acked_at: z.string().nullable(),
+  ack_detail: z.string(),
+});
+
+/** What an agent receives when it checks in — deliberately minimal, no status. */
+export const pendingCommandOut = z.object({
+  id: z.number().int(),
+  action: commandAction,
+  payload: z.record(z.string(), z.unknown()),
+});
+
+/** Pending fleet-management commands are attached to every check-in response
+ * (register/heartbeat/sync) so a REST-only agent picks them up on its next
+ * scan cycle without needing the optional WebSocket channel. */
+export const commandsField = z.array(pendingCommandOut).default([]);
+
+export const commandAckRequest = z.object({
+  status: z.enum(["acked", "failed"]),
+  detail: z.string().max(2000).default(""),
+});
+
 // ── agent endpoints ───────────────────────────────────────────────────────────
 export const registerRequest = z.object({
   display_name: z.string().max(120).nullish(),
@@ -70,6 +117,7 @@ export const registerRequest = z.object({
 export const registerResponse = z.object({
   system_id: z.string(),
   display_name: z.string(),
+  commands: commandsField,
 });
 
 // ── Claude account reporting ──────────────────────────────────────────────────
@@ -169,6 +217,7 @@ export const syncResponse = z.object({
   inserted: z.number(),
   duplicates: z.number(),
   failed: z.number(),
+  commands: commandsField,
 });
 
 // ── dashboard ─────────────────────────────────────────────────────────────────
@@ -310,3 +359,337 @@ export const systemStatusOut = z.object({
 });
 
 export const errorOut = z.object({ detail: z.string() });
+
+// ── project management (initiatives) ───────────────────────────────────────────
+export const initiativeStatus = z.enum(["active", "on_hold", "completed", "archived"]);
+export const taskStatus = z.enum(["todo", "in_progress", "done"]);
+export const milestoneStatus = z.enum(["open", "done"]);
+
+export const initiativeCreate = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(20_000).default(""),
+});
+export const initiativeUpdate = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(20_000).optional(),
+  status: initiativeStatus.optional(),
+});
+export const initiativeOut = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  description: z.string(),
+  status: initiativeStatus,
+  created_by_user_id: z.number().int().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  task_count: z.number().int(),
+  open_task_count: z.number().int(),
+});
+
+const dateField = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD")
+  .nullable();
+
+export const milestoneCreate = z.object({
+  name: z.string().min(1).max(200),
+  due_date: dateField.default(null),
+});
+export const milestoneUpdate = z.object({
+  name: z.string().min(1).max(200).optional(),
+  due_date: dateField.optional(),
+  status: milestoneStatus.optional(),
+});
+export const milestoneOut = z.object({
+  id: z.number().int(),
+  initiative_id: z.number().int(),
+  name: z.string(),
+  due_date: z.string().nullable(),
+  status: milestoneStatus,
+  created_at: z.string(),
+});
+
+export const taskPriority = z.enum(["low", "medium", "high", "urgent"]);
+
+export const taskCreate = z.object({
+  title: z.string().min(1).max(300),
+  description: z.string().max(20_000).default(""),
+  milestone_id: z.number().int().nullable().default(null),
+  assignee_user_id: z.number().int().nullable().default(null),
+  due_date: dateField.default(null),
+  epic_id: z.number().int().nullable().default(null),
+  sprint_id: z.number().int().nullable().default(null),
+  parent_task_id: z.number().int().nullable().default(null),
+  priority: taskPriority.default("medium"),
+  story_points: z.number().int().min(0).max(999).nullable().default(null),
+  // Free-form now (validated against the initiative's actual board_columns
+  // server-side, not this fixed enum) — omit to default to the first column.
+  status: z.string().max(32).optional(),
+});
+export const taskUpdate = z.object({
+  title: z.string().min(1).max(300).optional(),
+  description: z.string().max(20_000).optional(),
+  status: z.string().max(32).optional(),
+  milestone_id: z.number().int().nullable().optional(),
+  assignee_user_id: z.number().int().nullable().optional(),
+  due_date: dateField.optional(),
+  epic_id: z.number().int().nullable().optional(),
+  sprint_id: z.number().int().nullable().optional(),
+  parent_task_id: z.number().int().nullable().optional(),
+  priority: taskPriority.optional(),
+  story_points: z.number().int().min(0).max(999).nullable().optional(),
+});
+
+export const labelOut = z.object({ id: z.number().int(), name: z.string(), color: z.string() });
+
+export const taskOut = z.object({
+  id: z.number().int(),
+  initiative_id: z.number().int(),
+  milestone_id: z.number().int().nullable(),
+  epic_id: z.number().int().nullable(),
+  sprint_id: z.number().int().nullable(),
+  parent_task_id: z.number().int().nullable(),
+  title: z.string(),
+  description: z.string(),
+  status: z.string(),
+  priority: taskPriority,
+  story_points: z.number().int().nullable(),
+  assignee_user_id: z.number().int().nullable(),
+  created_by_user_id: z.number().int().nullable(),
+  due_date: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  comment_count: z.number().int(),
+  labels: z.array(labelOut).default([]),
+});
+
+export const epicCreate = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(20_000).default(""),
+  color: z.string().max(16).default("#6366f1"),
+});
+export const epicUpdate = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(20_000).optional(),
+  color: z.string().max(16).optional(),
+  status: z.enum(["open", "done"]).optional(),
+});
+export const epicOut = z.object({
+  id: z.number().int(),
+  initiative_id: z.number().int(),
+  name: z.string(),
+  description: z.string(),
+  color: z.string(),
+  status: z.enum(["open", "done"]),
+  created_at: z.string(),
+});
+
+export const sprintCreate = z.object({
+  name: z.string().min(1).max(200),
+  start_date: dateField.default(null),
+  end_date: dateField.default(null),
+});
+export const sprintUpdate = z.object({
+  name: z.string().min(1).max(200).optional(),
+  start_date: dateField.optional(),
+  end_date: dateField.optional(),
+  status: z.enum(["planned", "active", "completed"]).optional(),
+});
+export const sprintOut = z.object({
+  id: z.number().int(),
+  initiative_id: z.number().int(),
+  name: z.string(),
+  start_date: z.string().nullable(),
+  end_date: z.string().nullable(),
+  status: z.enum(["planned", "active", "completed"]),
+  created_at: z.string(),
+  task_count: z.number().int(),
+});
+
+export const columnCreate = z.object({
+  key: z.string().min(1).max(32).regex(/^[a-z0-9_]+$/, "lowercase letters, numbers, underscore only"),
+  label: z.string().min(1).max(60),
+});
+export const columnUpdate = z.object({
+  label: z.string().min(1).max(60).optional(),
+  position: z.number().int().min(0).optional(),
+  is_done_column: z.boolean().optional(),
+});
+export const columnOut = z.object({
+  id: z.number().int(),
+  initiative_id: z.number().int(),
+  key: z.string(),
+  label: z.string(),
+  position: z.number().int(),
+  is_done_column: z.boolean(),
+});
+
+export const labelCreate = z.object({
+  name: z.string().min(1).max(60),
+  color: z.string().max(16).default("#64748b"),
+});
+
+export const taskLabelAttach = z.object({ label_id: z.number().int() });
+export const taskSprintAssign = z.object({ sprint_id: z.number().int().nullable() });
+
+export const commentCreate = z.object({ body: z.string().min(1).max(10_000) });
+export const commentOut = z.object({
+  id: z.number().int(),
+  task_id: z.number().int(),
+  author_user_id: z.number().int().nullable(),
+  author_email: z.string(),
+  body: z.string(),
+  created_at: z.string(),
+});
+
+export const docCreate = z.object({
+  title: z.string().min(1).max(200),
+  body: z.string().max(200_000).default(""),
+});
+export const docUpdate = z.object({
+  title: z.string().min(1).max(200).optional(),
+  body: z.string().max(200_000).optional(),
+});
+export const docOut = z.object({
+  id: z.number().int(),
+  initiative_id: z.number().int().nullable(),
+  title: z.string(),
+  body: z.string(),
+  created_by_user_id: z.number().int().nullable(),
+  updated_by_user_id: z.number().int().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+// ── team chat ──────────────────────────────────────────────────────────────────
+export const channelCreate = z.object({
+  name: z.string().min(1).max(120),
+  member_ids: z.array(z.number().int()).max(200).default([]),
+});
+
+export const dmCreate = z.object({ user_id: z.number().int() });
+
+export const messageCreate = z.object({ body: z.string().min(1).max(10_000) });
+
+export const channelOut = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  kind: z.enum(["channel", "dm"]),
+  member_ids: z.array(z.number().int()),
+  last_message_at: z.string().nullable(),
+});
+
+export const chatMessageOut = z.object({
+  id: z.number().int(),
+  channel_id: z.number().int(),
+  author_user_id: z.number().int().nullable(),
+  author_email: z.string(),
+  body: z.string(),
+  created_at: z.string(),
+});
+
+// ── whiteboard ───────────────────────────────────────────────────────────────
+export const boardCreate = z.object({ name: z.string().min(1).max(200) });
+export const boardOut = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  created_at: z.string(),
+});
+
+export const elementOut = z.object({
+  id: z.number().int(),
+  board_id: z.number().int(),
+  kind: z.enum(["note", "stroke"]),
+  data: z.record(z.string(), z.unknown()),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+// ── automation ───────────────────────────────────────────────────────────────
+export const automationTrigger = z.enum([
+  "task_created",
+  "task_status_changed",
+  "task_assigned",
+  "task_commented",
+]);
+export const automationAction = z.enum([
+  "notify_user",
+  "notify_assignee",
+  "post_to_channel",
+  "change_task_status",
+]);
+
+export const automationRuleCreate = z.object({
+  name: z.string().min(1).max(200),
+  trigger_type: automationTrigger,
+  trigger_filter: z.record(z.string(), z.unknown()).default({}),
+  action_type: automationAction,
+  action_config: z.record(z.string(), z.unknown()).default({}),
+  enabled: z.boolean().default(true),
+});
+
+export const automationRuleUpdate = z.object({
+  name: z.string().min(1).max(200).optional(),
+  trigger_filter: z.record(z.string(), z.unknown()).optional(),
+  action_config: z.record(z.string(), z.unknown()).optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const automationRuleOut = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  trigger_type: z.string(),
+  trigger_filter: z.record(z.string(), z.unknown()),
+  action_type: z.string(),
+  action_config: z.record(z.string(), z.unknown()),
+  enabled: z.boolean(),
+  created_at: z.string(),
+});
+
+export const automationRunOut = z.object({
+  id: z.number().int(),
+  rule_id: z.number().int().nullable(),
+  rule_name: z.string(),
+  entity_type: z.string(),
+  entity_id: z.number().int().nullable(),
+  status: z.enum(["ok", "error"]),
+  detail: z.string(),
+  at: z.string(),
+});
+
+export const reportsOut = z.object({
+  initiatives_by_status: z.array(z.object({ status: z.string(), n: z.number().int() })),
+  tasks_by_status: z.array(z.object({ status: z.string(), n: z.number().int() })),
+  workload: z.array(
+    z.object({ user_id: z.number().int(), email: z.string(), full_name: z.string(), n: z.number().int() }),
+  ),
+  completed_by_day: z.array(z.object({ day: z.string(), n: z.number().int() })),
+});
+
+export const searchResultOut = z.object({
+  kind: z.enum(["initiative", "task", "doc", "channel"]),
+  id: z.number().int(),
+  title: z.string(),
+  subtitle: z.string(),
+  link: z.string(),
+});
+
+export const calendarItemOut = z.object({
+  kind: z.enum(["task", "milestone"]),
+  id: z.number().int(),
+  initiative_id: z.number().int(),
+  initiative_name: z.string(),
+  title: z.string(),
+  due_date: z.string(),
+  status: z.string(),
+});
+
+export const activityOut = z.object({
+  id: z.number().int(),
+  actor_email: z.string(),
+  action: z.string(),
+  entity_type: z.string(),
+  entity_id: z.number().int(),
+  detail: z.string(),
+  at: z.string(),
+});

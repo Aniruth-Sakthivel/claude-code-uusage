@@ -8,6 +8,7 @@ import { api } from "../api/client";
 import { fleetKeys, qk } from "../api/queryKeys";
 import type { SystemRow } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { SystemCommandsPanel } from "../components/SystemCommandsPanel";
 import {
   Button,
   Card,
@@ -34,6 +35,7 @@ export function Systems() {
   const canManage = can("manage_systems");
 
   const [pendingDelete, setPendingDelete] = useState<SystemRow | null>(null);
+  const [managing, setManaging] = useState<SystemRow | null>(null);
 
   const q = useQuery({
     queryKey: qk.systems,
@@ -177,14 +179,24 @@ export function Systems() {
                   </Td>
                   {canManage && (
                     <Td align="right">
-                      <Button
-                        size="sm"
-                        variant="subtle"
-                        onClick={() => setPendingDelete(s)}
-                        aria-label={`Remove ${s.display_name}`}
-                      >
-                        Remove
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setManaging(s)}
+                          aria-label={`Agent controls for ${s.display_name}`}
+                        >
+                          Agent controls
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="subtle"
+                          onClick={() => setPendingDelete(s)}
+                          aria-label={`Remove ${s.display_name}`}
+                        >
+                          Remove
+                        </Button>
+                      </div>
                     </Td>
                   )}
                 </tr>
@@ -202,6 +214,8 @@ export function Systems() {
           </>
         )}
       </Card>
+
+      {managing && <SystemCommandsPanel system={managing} onClose={() => setManaging(null)} />}
 
       <ConfirmDialog
         open={pendingDelete !== null}
