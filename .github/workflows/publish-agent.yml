@@ -2,10 +2,10 @@ name: Publish agent to PyPI
 
 # Builds the meterhouse-rotor sdist/wheel and publishes to PyPI whenever a tag
 # matching agent-v* is pushed — the same trigger as the .exe release workflow.
-# Uses a PyPI API token from GitHub Actions secrets rather than trusted publishing.
-#
-# One-time setup required before this works: create a repository secret named
-# PYPI_API_TOKEN with a token from https://pypi.org/manage/account/token/
+# Uses PyPI Trusted Publishing (OIDC) — no stored API token needed. One-time
+# setup: register this repo/workflow/environment at
+# https://pypi.org/manage/account/publishing/ (owner=Aniruth-Sakthivel,
+# repo=claude-code-uusage, workflow=publish-agent.yml, environment=pypi).
 #
 # Cut a release (same tag triggers both this and release-agent.yml):
 #   git tag agent-v0.1.0
@@ -23,6 +23,8 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      id-token: write
     defaults:
       run:
         working-directory: agent
@@ -43,4 +45,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: agent/dist
-          password: ${{ secrets.PYPI_API_TOKEN }}
