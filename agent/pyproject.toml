@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meterhouse-rotor"
-version = "0.2.1"
+version = "0.2.2"
 description = "Rotor — the Meterhouse metering agent. Reads Claude Code usage on this machine and reports it to your Meterhouse dashboard."
 readme = "README.md"
 requires-python = ">=3.10"
