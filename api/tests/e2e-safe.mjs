@@ -242,6 +242,19 @@ try {
       connect.body.install_command.includes("| iex"),
   );
 
+  // Attribution: without this link the machine belongs to nobody, and the
+  // People/Sessions pages stay empty even though the Overview shows its usage.
+  const owner = await sql.query(
+    `select u.email from user_systems us join users u on u.id = us.user_id
+      where us.system_id = $1`,
+    [sysId],
+  );
+  check(
+    "connected PC is attributed to the user who connected it",
+    owner.rows.some((r) => r.email === adminEmail),
+    `owners: ${owner.rows.map((r) => r.email).join(",") || "(none)"}`,
+  );
+
   // The URL that was wrong in production — assert it is now the configured one.
   // The generated command must point at the origin the request came in on —
   // that is the host the dashboard was just served from, so it is reachable by
@@ -499,16 +512,38 @@ try {
 } finally {
   console.log("\ncleanup");
   await cleanup();
+
+  /**
+   * Verify this run left nothing behind — NOT that the database stood still.
+   * A real agent syncing on the same database legitimately adds events while
+   * the suite runs, and asserting a frozen event count made that look like a
+   * leak. Counts that only this suite can move are still compared exactly.
+   */
   const after = await baseline();
-  const restored =
-    after.systems === before.systems &&
-    after.api_keys === before.api_keys &&
-    after.users === before.users &&
-    after.events === before.events;
   check(
-    "database restored to baseline",
-    restored,
+    "no systems, keys, or users left behind",
+    after.systems === before.systems &&
+      after.api_keys === before.api_keys &&
+      after.users === before.users,
     `before ${JSON.stringify(before)} after ${JSON.stringify(after)}`,
+  );
+
+  const residue = await sql
+    .query(
+      `select (select count(*) from usage_events where event_id like $1)  as events,
+              (select count(*) from systems     where display_name like $2) as systems,
+              (select count(*) from users       where email like $2)        as users`,
+      [`%${RUN}%`, `${RUN}%`],
+    )
+    .then((r) => r.rows[0])
+    .catch(() => null);
+  check(
+    "no rows tagged with this run id remain",
+    residue !== null &&
+      Number(residue.events) === 0 &&
+      Number(residue.systems) === 0 &&
+      Number(residue.users) === 0,
+    JSON.stringify(residue),
   );
   await sql.end();
 }

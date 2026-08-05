@@ -42,6 +42,11 @@ def write_claude_json(tmp_path, extra=None):
             "organizationRole": "admin",
             "billingType": "stripe_subscription",
             "hasExtraUsageEnabled": False,
+            "accountCreatedAt": "2025-11-02T09:14:00.000Z",
+            "subscriptionCreatedAt": "2026-01-17T08:30:00.000Z",
+            "claudeCodeTrialEndsAt": "2026-02-16T08:30:00.000Z",
+            "seatTier": "max_5x",
+            "userRateLimitTier": "default_claude_max_5x",
             # Not on the allowlist — must be dropped.
             "accessToken": SECRETS[0],
             "refreshToken": SECRETS[1],
@@ -134,10 +139,41 @@ def test_only_allowlisted_identity_fields(tmp_path):
         "organization_role",
         "billing_type",
         "has_extra_usage_enabled",
+        "account_created_at",
+        "subscription_created_at",
+        "trial_ends_at",
+        "seat_tier",
+        "user_rate_limit_tier",
     }
     assert report["account"]["account_uuid"] == "acc-1111-2222"
     assert report["account"]["organization_type"] == "claude_max"
     assert report["account"]["rate_limit_tier"] == "default_claude_max_5x"
+
+
+def test_billing_timeline_fields_are_reported(tmp_path):
+    """The dashboard's renewal estimate has no other source for these."""
+    report = collect_account_report(enabled=True, path=write_claude_json(tmp_path))
+    acct = report["account"]
+    assert acct["subscription_created_at"] == "2026-01-17T08:30:00.000Z"
+    assert acct["trial_ends_at"] == "2026-02-16T08:30:00.000Z"
+    assert acct["account_created_at"] == "2025-11-02T09:14:00.000Z"
+    assert acct["seat_tier"] == "max_5x"
+
+
+def test_missing_billing_fields_stay_empty_not_absent(tmp_path):
+    """An account with no subscription must not break the payload shape."""
+    doc_path = write_claude_json(tmp_path)
+    import json as _json
+
+    doc = _json.loads(doc_path.read_text(encoding="utf-8"))
+    for k in ("subscriptionCreatedAt", "claudeCodeTrialEndsAt", "accountCreatedAt"):
+        doc["oauthAccount"].pop(k, None)
+    doc_path.write_text(_json.dumps(doc), encoding="utf-8")
+
+    acct = collect_account_report(enabled=True, path=doc_path)["account"]
+    assert acct["subscription_created_at"] == ""
+    assert acct["trial_ends_at"] == ""
+    assert acct["account_created_at"] == ""
 
 
 def test_limits_extracted_with_severity(tmp_path):

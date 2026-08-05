@@ -17,11 +17,22 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 
 import { api } from "../api/client";
 import { fleetKeys } from "../api/queryKeys";
 import type { ConnectResponse, SystemRow } from "../api/types";
 import {
+  AGENT_INSTALL,
+  BACKGROUND_TASK_COMMAND,
+  SCAN_COMMAND,
+  SYNC_COMMAND,
+  accountReportCommands,
+  registerCommand,
+  serverUrl,
+} from "../lib/agentSetup";
+import {
+  Alert,
   Button,
   Card,
   CardHead,
@@ -34,6 +45,61 @@ import {
 } from "./ui";
 
 const ENVIRONMENTS = ["", "development", "staging", "production", "personal"];
+
+/**
+ * One command, one step.
+ *
+ * The setup used to be a single ~30-line block with one copy button. Everything
+ * in it — the install, the key, the optional extras, the uninstall notes — was
+ * weighted the same, so people pasted the lot into the wrong shell or lost
+ * their place halfway through. Splitting it lets each line be copied and run on
+ * its own, and lets the required path be visually louder than the optional one.
+ *
+ * The numbering is not decoration: this is a real sequence, and a step run out
+ * of order fails.
+ */
+function Step({
+  n,
+  title,
+  children,
+  code,
+  optional = false,
+}: {
+  n: number;
+  title: string;
+  children?: ReactNode;
+  code?: string;
+  optional?: boolean;
+}) {
+  return (
+    <li className="flex gap-3 sm:gap-4">
+      <div
+        className={[
+          "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold tabular-nums",
+          optional
+            ? "border border-dashed border-line text-muted"
+            : "bg-accent text-white",
+        ].join(" ")}
+        aria-hidden
+      >
+        {n}
+      </div>
+
+      <div className="min-w-0 flex-1 pb-1">
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <span className="text-base font-medium">{title}</span>
+          {optional && (
+            <span className="rounded-full border border-line px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Optional
+            </span>
+          )}
+        </div>
+        {children && <div className="mb-2 text-sm text-muted">{children}</div>}
+        {code && <CodeBlock code={code} shell />}
+      </div>
+    </li>
+  );
+}
 
 function defaultName(): string {
   // A sensible starting point the user can edit.
@@ -102,49 +168,70 @@ export function ConnectPanel({
           }
         />
 
-        <ol className="flex flex-col gap-4">
-          <li>
-            <div className="mb-2 text-base font-medium">
-              1. Open <span className="font-semibold">PowerShell</span> on the PC you want
-              to track
-            </div>
-            <p className="text-sm text-muted">
-              Press <kbd className="rounded border border-line px-1">Win</kbd> +{" "}
-              <kbd className="rounded border border-line px-1">X</kbd>, then choose
-              Terminal or PowerShell. Needs{" "}
-              <a
-                href="https://python.org/downloads"
-                className="font-semibold text-accent underline underline-offset-2"
-              >
-                Python 3.10+
-              </a>{" "}
-              on PATH.
-            </p>
-          </li>
+        <Alert tone="warn" title="Use PowerShell, not cmd.exe">
+          Press <kbd className="rounded border border-line px-1">Win</kbd> +{" "}
+          <kbd className="rounded border border-line px-1">X</kbd> and choose Terminal or
+          PowerShell on the PC you want to track. cmd.exe does not strip the quotes in
+          step 3, so they end up inside your key and the connection fails. Needs{" "}
+          <a
+            href="https://python.org/downloads"
+            className="font-semibold text-accent underline underline-offset-2"
+          >
+            Python 3.10+
+          </a>
+          .
+        </Alert>
 
-          <li>
-            <div className="mb-2 text-base font-medium">2. Install the agent</div>
-            <CodeBlock code="pip install meterhouse-rotor" label="Install" />
-            <p className="mt-2 text-sm text-muted">
-              If <code className="rounded bg-surface-2 px-1">meterhouse</code> isn't
-              recognized afterwards, pip installed it outside PATH — add the printed
-              Scripts folder to PATH, or call it by full path.
-            </p>
-          </li>
+        <ol className="mt-4 flex flex-col gap-5">
+          <Step n={1} title="Install the agent" code={AGENT_INSTALL}>
+            Run once per PC. Commands use{" "}
+            <code className="rounded bg-surface-2 px-1">python -m</code> because pip puts
+            the <code className="rounded bg-surface-2 px-1">meterhouse</code> shortcut in a
+            folder Windows leaves off PATH.
+          </Step>
 
-          <li>
-            <div className="mb-2 text-base font-medium">3. Connect, then scan and sync</div>
-            <CodeBlock code={result.manual_commands} label="Register, scan & sync" shell />
-            <p className="mt-2 text-sm text-muted">
-              Your API key is baked into the <code className="rounded bg-surface-2 px-1">register</code>{" "}
-              command above — it doesn't expire, so store this block somewhere safe. For quick
-              copying without the rest of the block:
-            </p>
-            <div className="mt-2">
-              <CodeBlock code={result.api_key} label="API key" />
-            </div>
-          </li>
+          <Step
+            n={2}
+            title="Connect this PC"
+            code={registerCommand(serverUrl(), result.api_key, result.display_name)}
+          >
+            Your API key is in this line and does not expire — keep it somewhere safe.
+          </Step>
+
+          <Step n={3} title="Read local usage" code={SCAN_COMMAND}>
+            Reads token counts from <code className="rounded bg-surface-2 px-1">~/.claude</code>{" "}
+            into a local database. Prompts, responses, and source code are never read.
+          </Step>
+
+          <Step n={4} title="Send it to the dashboard" code={SYNC_COMMAND}>
+            This is the one that makes data appear. Refresh the dashboard after it prints{" "}
+            <code className="rounded bg-surface-2 px-1">Sync complete</code>.
+          </Step>
+
+          <Step n={5} title="Keep it syncing by itself" code={BACKGROUND_TASK_COMMAND}>
+            Scans and syncs every 15 minutes in the background — no window to leave open,
+            survives logout and reboot. (<code className="rounded bg-surface-2 px-1">
+              meterhouse daemon
+            </code>{" "}
+            is the foreground alternative and stops when you close the terminal.)
+          </Step>
+
+          <Step n={6} title="Report Claude account usage" optional code={accountReportCommands()}>
+            Adds this machine to the Claude accounts page with plan and rate-limit usage.{" "}
+            <code className="rounded bg-surface-2 px-1">show</code> prints exactly what
+            would be sent without sending it; the sync transmits it.
+          </Step>
         </ol>
+
+        <details className="mt-5 rounded-xl border border-line bg-surface-2 p-3">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Copy everything as one block, or just the key
+          </summary>
+          <div className="mt-3 flex flex-col gap-3">
+            <CodeBlock code={result.api_key} label="API key" />
+            <CodeBlock code={result.manual_commands} label="Full setup, including uninstall" shell />
+          </div>
+        </details>
       </Card>
     );
   }

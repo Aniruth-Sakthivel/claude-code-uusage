@@ -39,6 +39,16 @@ _ALLOWED_OAUTH_FIELDS = {
     "organizationRole": "organization_role",
     "billingType": "billing_type",
     "hasExtraUsageEnabled": "has_extra_usage_enabled",
+    # Billing timeline. Anthropic does not publish a next-invoice date here, so
+    # the subscription start is the only anchor available for a renewal
+    # estimate, and the trial end is the one genuine "pay by" date in the file.
+    # All are plain timestamps/labels — no payment instrument is present in
+    # ~/.claude.json at all, and none is read.
+    "accountCreatedAt": "account_created_at",
+    "subscriptionCreatedAt": "subscription_created_at",
+    "claudeCodeTrialEndsAt": "trial_ends_at",
+    "seatTier": "seat_tier",
+    "userRateLimitTier": "user_rate_limit_tier",
 }
 
 # Fields taken from each entry of `utilization.limits`. That array is the

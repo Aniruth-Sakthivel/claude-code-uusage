@@ -26,7 +26,7 @@ import { db } from "../db/client.js";
 import { apiKeys, enrollTokens, systems } from "../db/schema.js";
 import { generateApiKey } from "../core/auth-agent.js";
 import { forbidden, notFound } from "../core/errors.js";
-import { DEVELOPER, type Principal } from "../core/rbac.js";
+import { type Principal } from "../core/rbac.js";
 import * as repo from "../repositories/admin.js";
 import { allowsSystem, type Allowed } from "../repositories/scope.js";
 
@@ -176,12 +176,23 @@ export async function connectPc(
       tx,
     );
 
-    // Developers only see systems explicitly assigned to them (visibleSystemIds
-    // is restrictive for that role, unlike admin/manager/viewer) — without
-    // this, a developer connecting their own PC wouldn't see it afterward.
-    if (actor.role === DEVELOPER) {
-      await repo.addUserSystem(actor.id, systemId, tx);
-    }
+    /**
+     * Record who connected this machine, for every role.
+     *
+     * Two things depend on this link. Visibility: developers only see systems
+     * explicitly assigned to them, so without it a developer connecting their
+     * own PC could not see it afterward. Attribution: the People and Sessions
+     * pages build their rows from `user_systems`, so a machine with no link
+     * belongs to nobody and its activity appears under no one — which is why
+     * an admin who connected their own PC saw those pages sit empty while the
+     * Overview happily showed the same usage.
+     *
+     * Safe for the non-developer roles: `visibleSystemIds` returns null (all
+     * systems) for admin/manager/viewer and never consults `user_systems`, so
+     * adding a row grants attribution without narrowing anyone's access.
+     * `addUserSystem` is idempotent, so re-keying an existing PC is a no-op.
+     */
+    await repo.addUserSystem(actor.id, systemId, tx);
 
     return { systemId, displayName };
   });
@@ -273,8 +284,21 @@ function manualSetupBlock(
   apiKey: string,
   wsUrl?: string,
 ): string {
+  /**
+   * Every command goes through `python -m meterhouse`, never the bare
+   * `meterhouse` launcher.
+   *
+   * `pip install` drops console scripts into the *user* Scripts directory
+   * (`%APPDATA%\Roaming\Python\PythonXY\Scripts`) whenever the system Python
+   * directory isn't writable — which is the norm without admin rights. Windows
+   * does not put that directory on PATH, so `meterhouse …` fails with "not
+   * recognized" even though the install succeeded. `python -m` resolves the
+   * module through the interpreter that is already on PATH, so it works in
+   * cmd.exe and PowerShell alike with no PATH surgery. `pip` itself lives in
+   * that same Scripts directory, so it gets the same treatment.
+   */
   const registerArgs = [
-    "meterhouse register",
+    "python -m meterhouse register",
     `--server ${pwshQuote(server)}`,
     `--api-key ${pwshQuote(apiKey)}`,
     `--display-name ${pwshQuote(displayName)}`,
@@ -282,31 +306,52 @@ function manualSetupBlock(
   if (wsUrl) registerArgs.push(`--ws-url ${pwshQuote(wsUrl)}`);
 
   return [
-    "# 1 - install the agent (once per PC)",
-    "pip install meterhouse-rotor",
+    "# Run these in PowerShell. (In cmd.exe the single quotes below are NOT",
+    "# stripped by the shell and end up inside the values - if you must use",
+    "# cmd.exe, remove every ' character first.)",
     "",
-    "# If 'meterhouse' is not recognized afterwards, pip installed it outside PATH.",
-    "# Add the printed Scripts folder to PATH, or call it by full path, e.g.:",
-    "#   $env:Path += ';C:\\Users\\<you>\\AppData\\Roaming\\Python\\Python3XX\\Scripts'",
-    "#   [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User')",
-    "# then open a new terminal.",
+    "# 1 - install the agent (once per PC)",
+    "python -m pip install --upgrade meterhouse-rotor",
     "",
     "# 2 - connect this PC (once)",
     registerArgs.join(" "),
     "",
     "# 3 - scan local transcripts and send to the dashboard",
-    "meterhouse scan",
-    "meterhouse sync",
+    "python -m meterhouse scan",
+    "python -m meterhouse sync",
     "",
-    "# 4 - run continuously in the background (scans every 60s)",
-    "meterhouse daemon",
+    "# 4 - OPTIONAL: report Claude account + rate-limit usage to the",
+    "#     dashboard's 'Claude accounts' page. Off by default. 'show' prints the",
+    "#     exact payload first - credentials and OAuth tokens are never read.",
+    "python -m meterhouse account show",
+    "python -m meterhouse account enable",
+    "python -m meterhouse sync          # the account report goes out with a sync",
+    "",
+    "# 5 - keep it updating on its own. Pick ONE:",
+    "",
+    "#   (a) Background, survives logout/reboot, NO window to keep open.",
+    "#       Scheduled task runs scan+sync every 15 minutes:",
+    "$py = (Get-Command python).Source",
+    "schtasks /Create /SC MINUTE /MO 15 /TN \"Meterhouse Scan+Sync\" /F /ST 00:00 " +
+      "/TR \"cmd /c $py -m meterhouse scan --quiet && $py -m meterhouse sync --quiet\"",
+    "",
+    "#   (b) Foreground daemon - scans every 60s, but ONLY while this window",
+    "#       stays open. Closing the terminal stops it. Good for a quick test:",
+    "python -m meterhouse daemon",
+    "",
+    "# Optional: if you would rather type 'meterhouse' than 'python -m meterhouse',",
+    "# add the user Scripts folder to PATH once, then open a new terminal:",
+    "#   $s = python -c \"import site,os;print(os.path.join(site.USER_BASE,'Scripts'))\"",
+    "#   [Environment]::SetEnvironmentVariable('Path', \"$env:Path;$s\", 'User')",
     "",
     "# --- Uninstalling this PC ---",
-    "# Stop the daemon and remove its scheduled tasks (if the one-line installer set them up):",
+    "# Remove whichever scheduled tasks exist (the first two are created by the",
+    "# one-line installer, the third by option (a) above). Errors are harmless.",
     'schtasks /Delete /TN "Meterhouse Daemon" /F',
     'schtasks /Delete /TN "Meterhouse Daemon Watchdog" /F',
+    'schtasks /Delete /TN "Meterhouse Scan+Sync" /F',
     "# Remove the agent package and its local data (never touches ~/.claude/projects):",
-    "pip uninstall meterhouse-rotor -y",
+    "python -m pip uninstall meterhouse-rotor -y",
     'Remove-Item -Recurse -Force "$env:USERPROFILE\\.claude\\meterhouse" -ErrorAction SilentlyContinue',
     'Remove-Item -Recurse -Force "$env:LOCALAPPDATA\\Meterhouse" -ErrorAction SilentlyContinue',
     "# Finally, remove this PC from the dashboard's Systems list so it stops appearing there.",

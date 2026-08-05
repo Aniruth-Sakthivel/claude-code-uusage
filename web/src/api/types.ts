@@ -393,6 +393,25 @@ export interface AccountUserRef {
   id: number;
   email: string;
   full_name: string;
+  /** This person's machines on this account. */
+  systems: AccountSystemRef[];
+  /**
+   * Usage of that person's machines. A machine shared by two people counts for
+   * both, so these describe attribution and need not sum to the account total.
+   */
+  tokens_today: number;
+  tokens_week: number;
+  /** Portion of the week's tokens across the people on this account, 0–100. */
+  share_percent: number;
+}
+
+export interface BillingDates {
+  /** Next monthly anniversary of the subscription start. Always an estimate. */
+  next_renewal_at: string | null;
+  is_estimate: boolean;
+  /** Real pay-by date while a trial runs; null once it has passed. */
+  trial_ends_at: string | null;
+  days_until: number | null;
 }
 
 export interface AccountRow {
@@ -414,7 +433,16 @@ export interface AccountRow {
   /** Claude Code cached these figures — they can lag reality. */
   utilization_fetched_at: string | null;
   systems: AccountSystemRef[];
+  /** Everyone on this subscription, heaviest first. */
   users: AccountUserRef[];
+  /** Bound machines with no owner — their usage counts, but belongs to nobody. */
+  unassigned_systems: AccountSystemRef[];
+  /** More than one person shares this Claude subscription. */
+  is_shared: boolean;
+  /** Heaviest user this week; null unless the account is shared. */
+  top_user: { id: number; name: string; tokens_week: number; share_percent: number } | null;
+  billing: BillingDates;
+  seat_tier: string;
   tokens_today: number;
   tokens_week: number;
   last_seen_at: string | null;

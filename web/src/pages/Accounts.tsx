@@ -24,12 +24,9 @@ import {
   Input,
   LoadingState,
   Pagination,
-  Table,
-  Td,
-  Th,
 } from "../components/ui";
 import { UtilizationMeter } from "../components/charts/UtilizationMeter";
-import { fmtRelative, fmtResetsIn, fmtTokens } from "../lib/format";
+import { fmtDate, fmtRelative, fmtResetsIn, fmtTokens } from "../lib/format";
 import { useTableControls } from "../lib/useTableControls";
 
 const REFRESH_MS = 60_000;
@@ -50,6 +47,182 @@ function PlanBadge({ label, family }: { label: string; family: string }) {
   // Only Max gets the accent — everything else stays neutral so the badge
   // column doesn't turn into a colour chart.
   return <Badge tone={family === "max" ? "accent" : "neutral"}>{label}</Badge>;
+}
+
+/** Renewal / trial line. Never states an amount — only a date to expect one. */
+function BillingLine({ billing }: { billing: AccountRow["billing"] }) {
+  if (!billing) return <span className="text-muted">—</span>;
+
+  if (billing.trial_ends_at) {
+    return (
+      <span>
+        Trial ends <span className="font-semibold">{fmtDate(billing.trial_ends_at)}</span>
+        {billing.days_until !== null && (
+          <span className="text-muted"> · in {billing.days_until}d</span>
+        )}
+      </span>
+    );
+  }
+  if (billing.next_renewal_at) {
+    return (
+      <span>
+        Renews <span className="font-semibold">{fmtDate(billing.next_renewal_at)}</span>
+        {billing.days_until !== null && (
+          <span className="text-muted"> · in {billing.days_until}d</span>
+        )}
+        {/* Anthropic publishes no invoice date; this is the subscription's
+            monthly anniversary, so say so rather than implying it is billed. */}
+        <span className="text-muted"> (est.)</span>
+      </span>
+    );
+  }
+  return <span className="text-muted">Renewal date unknown</span>;
+}
+
+/**
+ * Who is consuming this subscription.
+ *
+ * The whole reason to look at a shared account is to find out which person is
+ * eating it, so the people are ranked and given a proportional bar — a list of
+ * names and raw token counts makes the reader do that comparison in their head.
+ *
+ * The bars are shares *among these people*, not of the account total: a machine
+ * assigned to two people counts for each, and unowned machines belong to no
+ * one, so shares of the account total would not add up to 100% and would read
+ * as a rendering bug.
+ */
+function UsageBreakdown({ account }: { account: AccountRow }) {
+  const unowned = account.unassigned_systems ?? [];
+
+  if (account.users.length === 0) {
+    return (
+      <div className="text-sm text-muted">
+        {unowned.length > 0
+          ? `${unowned.length} machine${unowned.length === 1 ? "" : "s"} bound, but assigned to nobody — assign an owner to see usage per person.`
+          : "No machines bound to this account yet."}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      {account.users.map((u, i) => (
+        <div key={u.id}>
+          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">{u.full_name || u.email}</span>
+              {i === 0 && account.is_shared && <Badge tone="accent">Heaviest</Badge>}
+            </div>
+            <div className="tnum text-xs text-muted">
+              <span className="font-semibold text-ink-2">{fmtTokens(u.tokens_week)}</span> this
+              week · {fmtTokens(u.tokens_today)} today
+              {account.is_shared && <> · {u.share_percent}%</>}
+            </div>
+          </div>
+
+          {account.is_shared && (
+            <div
+              className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2"
+              role="img"
+              aria-label={`${u.full_name || u.email}: ${u.share_percent}% of this account's usage`}
+            >
+              <div
+                className={`h-full rounded-full ${i === 0 ? "bg-accent" : "bg-ink-2/40"}`}
+                style={{ width: `${Math.max(u.share_percent, 1)}%` }}
+              />
+            </div>
+          )}
+
+          <div className="mt-0.5 text-2xs text-muted">
+            {u.systems.length > 0
+              ? u.systems.map((s) => s.display_name).join(", ")
+              : "no machines"}
+          </div>
+        </div>
+      ))}
+
+      {unowned.length > 0 && (
+        <div className="border-t border-line pt-2 text-2xs text-muted">
+          Not counted above: {unowned.map((s) => s.display_name).join(", ")} — bound to this
+          account with no owner on record.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One subscription: what it is, how loaded it is, and who is using it. */
+function AccountCard({ account: a }: { account: AccountRow }) {
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-semibold">{a.email_address || a.display_name}</span>
+            <PlanBadge label={a.plan_label} family={a.plan_family} />
+            <span className={`text-xs font-semibold ${STATUS_TONE[a.status]}`}>
+              {STATUS_LABEL[a.status]}
+            </span>
+          </div>
+          <div className="mt-0.5 text-xs text-muted">
+            {a.organization_name || "—"}
+            {a.seat_tier && <> · seat {a.seat_tier}</>}
+          </div>
+        </div>
+
+        <div className="text-right text-xs">
+          <div className="text-muted">Next payment</div>
+          <div className="text-ink-2">
+            <BillingLine billing={a.billing} />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-[1fr_1.2fr]">
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="mb-1 flex items-baseline justify-between text-xs">
+              <span className="text-muted">Weekly limit</span>
+              <span className="tnum text-2xs text-muted">
+                {a.weekly_resets_at ? `resets ${fmtResetsIn(a.weekly_resets_at)}` : "—"}
+              </span>
+            </div>
+            <UtilizationMeter percent={a.weekly_percent} health={a.health} compact />
+          </div>
+          <div>
+            <div className="mb-1 flex items-baseline justify-between text-xs">
+              <span className="text-muted">5-hour limit</span>
+              <span className="tnum text-2xs text-muted">
+                {a.session_resets_at ? `resets ${fmtResetsIn(a.session_resets_at)}` : "—"}
+              </span>
+            </div>
+            <UtilizationMeter percent={a.session_percent} health={a.health} compact />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
+            <div>
+              <div className="text-2xs text-muted">Tokens today</div>
+              <div className="tnum text-lg font-semibold">{fmtTokens(a.tokens_today)}</div>
+            </div>
+            <div>
+              <div className="text-2xs text-muted">Tokens this week</div>
+              <div className="tnum text-lg font-semibold">{fmtTokens(a.tokens_week)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted">
+              {a.is_shared ? "Who is using it most" : "Who is using it"}
+            </span>
+            {a.is_shared && <Badge tone="neutral">{a.users.length} people</Badge>}
+          </div>
+          <UsageBreakdown account={a} />
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -126,11 +299,28 @@ export function Accounts() {
           <EmptyState
             title="No Claude accounts reported yet"
             hint={
+              /* Enabling reporting on its own changes nothing here — a report
+                 has to be pushed before this page can fill in. Leaving that
+                 step out is what makes the page look broken to someone who has
+                 already run `account enable`. */
               <>
                 Account reporting is off by default. On each PC, run{" "}
-                <code className="rounded bg-surface-2 px-1 py-0.5">meterhouse account show</code> to
-                see exactly what would be sent, then{" "}
-                <code className="rounded bg-surface-2 px-1 py-0.5">meterhouse account enable</code>.
+                <code className="rounded bg-surface-2 px-1 py-0.5">
+                  python -m meterhouse account show
+                </code>{" "}
+                to see exactly what would be sent, then{" "}
+                <code className="rounded bg-surface-2 px-1 py-0.5">
+                  python -m meterhouse account enable
+                </code>
+                . Enabling alone sends nothing — the report goes out with the next{" "}
+                <code className="rounded bg-surface-2 px-1 py-0.5">
+                  python -m meterhouse sync
+                </code>{" "}
+                (or from{" "}
+                <code className="rounded bg-surface-2 px-1 py-0.5">
+                  python -m meterhouse daemon
+                </code>
+                , which is the only way on agent 0.1.2 and older).
               </>
             }
           />
@@ -178,101 +368,11 @@ export function Accounts() {
             {table.total === 0 ? (
               <EmptyState title="No accounts match your search" />
             ) : (
-              <Table caption="Claude accounts with plan, assigned people, and rate-limit use">
-                <thead>
-                  <tr>
-                    <Th
-                      sortDir={table.sortKey === "account" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("account")}
-                    >
-                      Account
-                    </Th>
-                    <Th
-                      sortDir={table.sortKey === "plan" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("plan")}
-                    >
-                      Plan
-                    </Th>
-                    <Th
-                      sortDir={table.sortKey === "users" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("users")}
-                    >
-                      People
-                    </Th>
-                    <Th>Status</Th>
-                    <Th
-                      sortDir={table.sortKey === "weekly" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("weekly")}
-                    >
-                      Weekly limit
-                    </Th>
-                    <Th
-                      sortDir={table.sortKey === "session" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("session")}
-                    >
-                      5-hour limit
-                    </Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "tokens" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("tokens")}
-                    >
-                      Tokens (7d)
-                    </Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {table.rows.map((a) => (
-                    <tr key={a.account_uuid}>
-                      <Td>
-                        <div className="font-semibold">{a.email_address || a.display_name}</div>
-                        <div className="text-xs text-muted">{a.organization_name || "—"}</div>
-                      </Td>
-                      <Td>
-                        <PlanBadge label={a.plan_label} family={a.plan_family} />
-                      </Td>
-                      <Td>
-                        {a.users.length === 0 ? (
-                          <span className="text-muted">unassigned</span>
-                        ) : (
-                          <div className="text-ink-2">
-                            {a.users.map((u) => u.full_name || u.email).join(", ")}
-                          </div>
-                        )}
-                        <div className="text-xs text-muted">
-                          {a.systems.length} PC{a.systems.length === 1 ? "" : "s"}
-                        </div>
-                      </Td>
-                      <Td>
-                        <span className={`text-sm font-semibold ${STATUS_TONE[a.status]}`}>
-                          {STATUS_LABEL[a.status]}
-                        </span>
-                      </Td>
-                      <Td>
-                        <UtilizationMeter
-                          percent={a.weekly_percent}
-                          health={a.health}
-                          compact
-                        />
-                        <div className="tnum text-2xs text-muted">
-                          {a.weekly_resets_at ? `resets ${fmtResetsIn(a.weekly_resets_at)}` : "—"}
-                        </div>
-                      </Td>
-                      <Td>
-                        <UtilizationMeter percent={a.session_percent} health={a.health} compact />
-                        <div className="tnum text-2xs text-muted">
-                          {a.session_resets_at ? `resets ${fmtResetsIn(a.session_resets_at)}` : "—"}
-                        </div>
-                      </Td>
-                      {/* Summed over the PCs currently bound to this account —
-                          approximate if someone switched plans mid-week. */}
-                      <Td align="right" className="tnum font-semibold">
-                        {fmtTokens(a.tokens_week)}
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
+              <div className="flex flex-col gap-4">
+                {table.rows.map((a) => (
+                  <AccountCard key={a.account_uuid} account={a} />
+                ))}
+              </div>
             )}
 
             <Pagination

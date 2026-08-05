@@ -15,11 +15,13 @@ import {
   accountUsageSnapshots,
   claudeAccounts,
   dailyAggregates,
+  roles,
   systemAccountBindings,
   systems,
   userSystems,
   users,
 } from "../db/schema.js";
+import { ADMIN, MANAGER } from "../core/rbac.js";
 import { isOnline } from "../core/time.js";
 import { scopeSystems, type Allowed } from "./scope.js";
 
@@ -34,6 +36,12 @@ export interface AccountIdentityInput {
   organization_role: string;
   billing_type: string;
   has_extra_usage_enabled: boolean;
+  /** Billing timeline; empty string when an older agent did not report it. */
+  account_created_at: string;
+  subscription_created_at: string;
+  trial_ends_at: string;
+  seat_tier: string;
+  user_rate_limit_tier: string;
 }
 
 export interface LimitInput {
@@ -72,7 +80,14 @@ export async function recordAccountReport(input: {
   fetchedAtMs: number;
   limits: LimitInput[];
   dollars: Record<string, DollarsInput>;
-}): Promise<{ accountId: number; switchedFrom: string | null }> {
+}): Promise<{
+  accountId: number;
+  switchedFrom: string | null;
+  /** Reading per limit kind as it stood *before* this report, for alerting. */
+  previousPercents: Map<string, number>;
+}> {
+  const previousPercents = new Map<string, number>();
+
   return db.transaction(async (tx) => {
     const now = new Date();
     const id = input.identity;
@@ -92,6 +107,11 @@ export async function recordAccountReport(input: {
         organizationRole: id.organization_role,
         billingType: id.billing_type,
         hasExtraUsageEnabled: id.has_extra_usage_enabled,
+        accountCreatedAt: id.account_created_at,
+        subscriptionCreatedAt: id.subscription_created_at,
+        trialEndsAt: id.trial_ends_at,
+        seatTier: id.seat_tier,
+        userRateLimitTier: id.user_rate_limit_tier,
         firstSeenAt: now,
         lastSeenAt: now,
       })
@@ -107,6 +127,13 @@ export async function recordAccountReport(input: {
           organizationRole: id.organization_role,
           billingType: id.billing_type,
           hasExtraUsageEnabled: id.has_extra_usage_enabled,
+          // An agent too old to report these sends "", which must not wipe a
+          // value an up-to-date agent already supplied for the same account.
+          accountCreatedAt: sql`coalesce(nullif(${id.account_created_at}, ''), ${claudeAccounts.accountCreatedAt})`,
+          subscriptionCreatedAt: sql`coalesce(nullif(${id.subscription_created_at}, ''), ${claudeAccounts.subscriptionCreatedAt})`,
+          trialEndsAt: sql`coalesce(nullif(${id.trial_ends_at}, ''), ${claudeAccounts.trialEndsAt})`,
+          seatTier: sql`coalesce(nullif(${id.seat_tier}, ''), ${claudeAccounts.seatTier})`,
+          userRateLimitTier: sql`coalesce(nullif(${id.user_rate_limit_tier}, ''), ${claudeAccounts.userRateLimitTier})`,
           lastSeenAt: now,
         },
       })
@@ -152,6 +179,23 @@ export async function recordAccountReport(input: {
         .values({ systemId: input.systemId, accountId: account.id, validFrom: now });
     }
 
+    // Capture the previous reading per kind BEFORE appending the new one —
+    // limit alerting fires on an upward crossing, so it needs the value this
+    // report is about to supersede. Read inside the same transaction so a
+    // concurrent report cannot slip between the read and the insert.
+    const priorRows = await tx
+      .selectDistinctOn([accountUsageSnapshots.kind], {
+        kind: accountUsageSnapshots.kind,
+        percent: accountUsageSnapshots.percent,
+      })
+      .from(accountUsageSnapshots)
+      .where(eq(accountUsageSnapshots.accountId, account.id))
+      .orderBy(accountUsageSnapshots.kind, desc(accountUsageSnapshots.fetchedAt));
+    for (const row of priorRows) {
+      const value = Number(row.percent);
+      if (Number.isFinite(value)) previousPercents.set(row.kind, value);
+    }
+
     // 3. Append the rate-limit readings. Deduped on (account, kind, fetchedAt)
     //    so re-reporting an unchanged cached value is a no-op.
     const fetchedAt = new Date(input.fetchedAtMs || now.getTime());
@@ -184,8 +228,36 @@ export async function recordAccountReport(input: {
         .onConflictDoNothing();
     }
 
-    return { accountId: account.id, switchedFrom };
+    return { accountId: account.id, switchedFrom, previousPercents };
   });
+}
+
+/**
+ * Who should hear about this account's limits.
+ *
+ * The people whose machines are on it, plus every admin and manager — those
+ * roles see the whole fleet, so an account nobody is assigned to still reaches
+ * someone who can act on it.
+ */
+export async function alertRecipients(accountId: number): Promise<number[]> {
+  const assigned = await db
+    .selectDistinct({ userId: userSystems.userId })
+    .from(systemAccountBindings)
+    .innerJoin(userSystems, eq(userSystems.systemId, systemAccountBindings.systemId))
+    .where(
+      and(
+        eq(systemAccountBindings.accountId, accountId),
+        isNull(systemAccountBindings.validTo),
+      ),
+    );
+
+  const overseers = await db
+    .select({ id: users.id })
+    .from(users)
+    .innerJoin(roles, eq(roles.id, users.roleId))
+    .where(and(inArray(roles.name, [ADMIN, MANAGER]), eq(users.isActive, true)));
+
+  return [...new Set([...assigned.map((r) => r.userId), ...overseers.map((r) => r.id)])];
 }
 
 /**
@@ -214,9 +286,23 @@ export interface AccountListRow {
   organization_type: string;
   rate_limit_tier: string;
   has_extra_usage_enabled: boolean;
+  subscription_created_at: string;
+  trial_ends_at: string;
+  seat_tier: string;
   last_seen_at: string | null;
   systems: { system_id: string; display_name: string; status: string }[];
-  users: { id: number; email: string; full_name: string }[];
+  /** Everyone on this subscription, heaviest first, each with their own
+   * machines and totals — so a shared account can be read per person. */
+  users: {
+    id: number;
+    email: string;
+    full_name: string;
+    systems: { system_id: string; display_name: string; status: string }[];
+    tokens_today: number;
+    tokens_week: number;
+  }[];
+  unassigned_systems: { system_id: string; display_name: string; status: string }[];
+  is_shared: boolean;
   limits: {
     kind: string;
     scope_label: string;
@@ -326,7 +412,20 @@ export async function listAccounts(
   return accounts.map((account) => {
     const own = bindings.filter((b) => b.accountId === account.id);
     const systemMap = new Map<string, { system_id: string; display_name: string; status: string }>();
-    const userMap = new Map<number, { id: number; email: string; full_name: string }>();
+    const userMap = new Map<
+      number,
+      {
+        id: number;
+        email: string;
+        full_name: string;
+        systems: { system_id: string; display_name: string; status: string }[];
+        tokens_today: number;
+        tokens_week: number;
+      }
+    >();
+    /** Bound machines nobody owns — otherwise their usage vanishes from the
+     * per-person breakdown while still counting toward the account total. */
+    const unassigned: { system_id: string; display_name: string; status: string }[] = [];
     let tokensToday = 0;
     let tokensWeek = 0;
 
@@ -341,14 +440,37 @@ export async function listAccounts(
         tokensToday += Number(t?.today ?? 0);
         tokensWeek += Number(t?.week ?? 0);
       }
-      if (b.userId !== null && !userMap.has(b.userId)) {
-        userMap.set(b.userId, {
+      const systemRef = systemMap.get(b.systemId)!;
+
+      if (b.userId === null) {
+        if (!unassigned.some((s) => s.system_id === b.systemId)) unassigned.push(systemRef);
+        continue;
+      }
+
+      let entry = userMap.get(b.userId);
+      if (!entry) {
+        entry = {
           id: b.userId,
           email: b.userEmail ?? "",
           full_name: b.userName ?? "",
-        });
+          systems: [],
+          tokens_today: 0,
+          tokens_week: 0,
+        };
+        userMap.set(b.userId, entry);
+      }
+      // Per-person totals are the usage of that person's machines on this
+      // account. A machine assigned to two people counts once for each — the
+      // figures describe attribution, and do not sum to the account total.
+      if (!entry.systems.some((s) => s.system_id === b.systemId)) {
+        entry.systems.push(systemRef);
+        const t = totalsBySystem.get(b.systemId);
+        entry.tokens_today += Number(t?.today ?? 0);
+        entry.tokens_week += Number(t?.week ?? 0);
       }
     }
+
+    const usersOut = [...userMap.values()].sort((a, b) => b.tokens_week - a.tokens_week);
 
     return {
       id: account.id,
@@ -359,9 +481,15 @@ export async function listAccounts(
       organization_type: account.organizationType,
       rate_limit_tier: account.rateLimitTier,
       has_extra_usage_enabled: account.hasExtraUsageEnabled,
+      subscription_created_at: account.subscriptionCreatedAt,
+      trial_ends_at: account.trialEndsAt,
+      seat_tier: account.seatTier,
       last_seen_at: account.lastSeenAt?.toISOString() ?? null,
       systems: [...systemMap.values()],
-      users: [...userMap.values()],
+      users: usersOut,
+      unassigned_systems: unassigned,
+      /** More than one person on the same Claude subscription. */
+      is_shared: usersOut.length > 1,
       limits: snapshots
         .filter((s) => s.accountId === account.id)
         .map((s) => ({

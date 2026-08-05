@@ -138,6 +138,14 @@ export const accountIdentityIn = z
     organization_role: z.string().max(40).default(""),
     billing_type: z.string().max(40).default(""),
     has_extra_usage_enabled: z.boolean().default(false),
+    // Billing timeline. Optional with empty defaults so an agent older than
+    // these fields keeps reporting successfully — `.strict()` rejects unknown
+    // keys, but missing known keys are fine.
+    account_created_at: z.string().max(40).default(""),
+    subscription_created_at: z.string().max(40).default(""),
+    trial_ends_at: z.string().max(40).default(""),
+    seat_tier: z.string().max(64).default(""),
+    user_rate_limit_tier: z.string().max(64).default(""),
   })
   .strict();
 
@@ -149,7 +157,14 @@ const accountLimitIn = z.object({
   percent: z.number().min(0).max(1000).default(0),
   severity: z.string().max(24).default(""),
   is_active: z.boolean().default(false),
-  resets_at: z.string().max(64).default(""),
+  // The reference agent coerces a missing reset time to "", but accept null
+  // too: this is an optional display field, and rejecting the whole
+  // utilisation report over it would lose the percentages that matter.
+  resets_at: z
+    .string()
+    .max(64)
+    .nullish()
+    .transform((v) => v ?? ""),
 });
 
 const accountDollarsIn = z.object({

@@ -135,12 +135,41 @@ def cmd_stats(args):
         store.close()
 
 
+def _unquote(value):
+    """Strip one layer of matching surrounding quotes.
+
+    The setup block the dashboard generates is quoted for PowerShell. Pasted
+    into cmd.exe — which does not treat `'...'` as quoting — the quotes arrive
+    as part of the value, so the agent would store `'https://host'` as the
+    server URL and every request would fail with a confusing error far from the
+    cause. Neither a URL nor an API key can legitimately start and end with a
+    quote, so removing one matched pair is always safe.
+    """
+    if value is None:
+        return None
+    v = value.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        return v[1:-1].strip()
+    return v
+
+
 def cmd_register(args):
     from .config import AgentConfig
     from .sync import SyncClient, SyncError, warn_if_insecure
+
+    server = _unquote(args.server)
+    api_key = _unquote(args.api_key)
+    args.display_name = _unquote(args.display_name)
+    args.ws_url = _unquote(args.ws_url)
+
+    if not server.lower().startswith(("http://", "https://")):
+        print(f"Invalid --server value: {server!r}\n"
+              "It must be the dashboard URL, e.g. https://meterhouse.netlify.app")
+        return
+
     ident = load_identity(display_name=args.display_name)
-    ident.server_url = args.server.rstrip("/")
-    ident.api_key = args.api_key
+    ident.server_url = server.rstrip("/")
+    ident.api_key = api_key
 
     warning = warn_if_insecure(ident.server_url)
     if warning:
@@ -181,6 +210,40 @@ def cmd_heartbeat(args):
         print(f"Heartbeat failed (offline?): {e}")
 
 
+def _report_account(client, cfg, verbose=True):
+    """Push the Claude account report, if the operator turned it on.
+
+    Previously only the daemon did this, so anyone driving the agent by hand
+    (`scan` + `sync`) enabled account reporting, was told it was ENABLED, and
+    then saw the dashboard's Claude accounts page stay permanently empty —
+    with nothing to explain the gap. Reporting on sync closes that.
+
+    Optional extra: every failure is swallowed. A usage push must never be
+    reported as failed because this part didn't work.
+    """
+    if not cfg.account_reporting_enabled:
+        return
+    from .account import collect_account_report
+    from .sync import SyncError
+
+    try:
+        payload = collect_account_report(enabled=True)
+        if payload is None:
+            if verbose:
+                print("Account reporting is on, but no Claude account was found "
+                      "in ~/.claude.json - nothing to report.")
+            return
+        client.report_account(payload)
+        if verbose:
+            print("Claude account details reported.")
+    except SyncError as e:
+        if verbose:
+            print(f"Account report failed (usage sync was unaffected): {e}")
+    except Exception as e:  # noqa: BLE001 - never let this fail a usage sync
+        if verbose:
+            print(f"Account report skipped: {type(e).__name__}: {e}")
+
+
 def cmd_sync(args):
     from .sync import SyncClient, SyncError, sync_store
     ident = load_identity()
@@ -189,12 +252,14 @@ def cmd_sync(args):
               "--server URL --api-key KEY")
         return
     store = Store(args.db or default_db_path())
+    cfg = AgentConfig.load()
     try:
         client = SyncClient(ident.server_url, ident.api_key)
         totals = sync_store(store, client, verbose=not args.quiet,
-                            send_titles=AgentConfig.load().session_titles_enabled)
+                            send_titles=cfg.session_titles_enabled)
         print(f"Sync complete: inserted={totals['inserted']} "
               f"duplicates={totals['duplicates']} (sent={totals['received']}).")
+        _report_account(client, cfg, verbose=not args.quiet)
     except SyncError as e:
         print(f"Sync failed (offline?) - will retry next run: {e}")
     finally:
@@ -261,7 +326,10 @@ def cmd_account(args):
         print(f"\n  Claude account reporting is now {state}.\n")
         if not cfg.account_reporting_enabled:
             return
-        print("  Run `meterhouse account show` to see exactly what will be sent.\n")
+        print("  Run `meterhouse account show` to see exactly what will be sent.")
+        # Enabling alone changes nothing on the dashboard until a report is
+        # actually pushed, which is easy to miss — say so explicitly.
+        print("  It is sent on the next `meterhouse sync` (or by the daemon).\n")
         return
 
     # show — read with reporting forced on, so the payload is visible even

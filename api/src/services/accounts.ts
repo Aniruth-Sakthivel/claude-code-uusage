@@ -7,6 +7,7 @@
  * own severity, falling back to a percentage threshold).
  */
 
+import { deriveBillingDates, type BillingDates } from "../core/billing.js";
 import { deriveHealth, derivePlan, type Health, type PlanFamily } from "../core/plans.js";
 import { listAccounts, type AccountListRow } from "../repositories/accounts.js";
 import type { Allowed } from "../repositories/scope.js";
@@ -35,7 +36,20 @@ export interface AccountView {
   /** When Claude Code last refreshed these figures — they can be stale. */
   utilization_fetched_at: string | null;
   systems: AccountListRow["systems"];
-  users: AccountListRow["users"];
+  /**
+   * Everyone on the subscription, heaviest first, each carrying `share_percent`
+   * — their portion of the week's tokens across the people on this account.
+   * That comparison is the point of the page: on a shared plan, the question is
+   * always which person is consuming it.
+   */
+  users: (AccountListRow["users"][number] & { share_percent: number })[];
+  unassigned_systems: AccountListRow["unassigned_systems"];
+  /** True when more than one person works on this subscription. */
+  is_shared: boolean;
+  /** The person with the most usage this week, when there is more than one. */
+  top_user: { id: number; name: string; tokens_week: number; share_percent: number } | null;
+  billing: BillingDates;
+  seat_tier: string;
   tokens_today: number;
   tokens_week: number;
   last_seen_at: string | null;
@@ -78,6 +92,30 @@ export async function buildAccountList(
       .sort()
       .at(-1);
 
+    /**
+     * Each person's share of the week, measured against the people on this
+     * account rather than the account total. Those two differ when a machine
+     * is assigned to more than one person (it counts for each) or belongs to
+     * nobody — and a bar chart whose segments do not reach 100% reads as a
+     * bug. Comparing people against each other is also the actual question:
+     * who is using this subscription most.
+     */
+    const peopleTotal = row.users.reduce((sum, u) => sum + u.tokens_week, 0);
+    const usersWithShare = row.users.map((u) => ({
+      ...u,
+      share_percent: peopleTotal > 0 ? Math.round((u.tokens_week / peopleTotal) * 1000) / 10 : 0,
+    }));
+    const heaviest = usersWithShare[0]; // repository already sorts heaviest first
+    const topUser =
+      heaviest && usersWithShare.length > 1
+        ? {
+            id: heaviest.id,
+            name: heaviest.full_name || heaviest.email,
+            tokens_week: heaviest.tokens_week,
+            share_percent: heaviest.share_percent,
+          }
+        : null;
+
     return {
       id: row.id,
       account_uuid: row.account_uuid,
@@ -95,7 +133,12 @@ export async function buildAccountList(
       session_resets_at: session?.resets_at ?? null,
       utilization_fetched_at: fetchedAt ?? null,
       systems: row.systems,
-      users: row.users,
+      users: usersWithShare,
+      unassigned_systems: row.unassigned_systems,
+      is_shared: row.is_shared,
+      top_user: topUser,
+      billing: deriveBillingDates(row.subscription_created_at, row.trial_ends_at),
+      seat_tier: row.seat_tier,
       tokens_today: row.tokens_today,
       tokens_week: row.tokens_week,
       last_seen_at: row.last_seen_at,

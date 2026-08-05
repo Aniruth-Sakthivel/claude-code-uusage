@@ -38,6 +38,14 @@ export function fmtDollars(n: number | null): string {
  * "in 41m" — how long until a rate-limit window resets. Counts forward, where
  * fmtRelative counts backward, so the two read correctly side by side.
  */
+/** Calendar date, e.g. "17 Mar 2026". Used where a day matters, not a time. */
+export function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
 export function fmtResetsIn(iso: string | null): string {
   if (!iso) return "—";
   const secs = Math.round((new Date(iso).getTime() - Date.now()) / 1000);

@@ -775,6 +775,23 @@ export const claudeAccounts = pgTable(
     organizationRole: varchar("organization_role", { length: 40 }).notNull().default(""),
     billingType: varchar("billing_type", { length: 40 }).notNull().default(""),
     hasExtraUsageEnabled: boolean("has_extra_usage_enabled").notNull().default(false),
+    /**
+     * Billing timeline, as reported by Claude Code.
+     *
+     * Anthropic does not publish a next-invoice date anywhere the agent can
+     * read, so `subscriptionCreatedAt` is the only anchor for a renewal
+     * estimate (billing recurs on its anniversary) and `trialEndsAt` is the
+     * one genuine pay-by date available. Stored as text exactly as reported —
+     * these are display values, and an unparseable string should degrade to
+     * "unknown" rather than fail an ingest.
+     */
+    accountCreatedAt: varchar("account_created_at", { length: 40 }).notNull().default(""),
+    subscriptionCreatedAt: varchar("subscription_created_at", { length: 40 })
+      .notNull()
+      .default(""),
+    trialEndsAt: varchar("trial_ends_at", { length: 40 }).notNull().default(""),
+    seatTier: varchar("seat_tier", { length: 64 }).notNull().default(""),
+    userRateLimitTier: varchar("user_rate_limit_tier", { length: 64 }).notNull().default(""),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   },
