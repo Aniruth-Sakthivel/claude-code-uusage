@@ -134,7 +134,7 @@ export function ConnectPanel({
 
           <li>
             <div className="mb-2 text-base font-medium">3. Connect, then scan and sync</div>
-            <CodeBlock code={result.manual_commands} label="Register, scan & sync" />
+            <CodeBlock code={result.manual_commands} label="Register, scan & sync" shell />
             <p className="mt-2 text-sm text-muted">
               Your API key is baked into the <code className="rounded bg-surface-2 px-1">register</code>{" "}
               command above — it doesn't expire, so store this block somewhere safe. For quick

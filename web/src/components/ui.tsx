@@ -630,7 +630,20 @@ export function useToast() {
 
 // ── misc ──────────────────────────────────────────────────────────────────────
 /** Copy-to-clipboard code block with feedback. */
-export function CodeBlock({ code, label }: { code: string; label?: string }) {
+/**
+ * `shell` renders the block line-by-line: `#` comments stay muted and the
+ * actual commands are bold, so a long setup block reads as "these are the
+ * lines I type". Copy still yields the exact original text.
+ */
+export function CodeBlock({
+  code,
+  label,
+  shell = false,
+}: {
+  code: string;
+  label?: string;
+  shell?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -652,7 +665,23 @@ export function CodeBlock({ code, label }: { code: string; label?: string }) {
     <div className="relative">
       {label && <div className="mb-1.5 text-xs font-semibold text-ink-2">{label}</div>}
       <pre className="overflow-x-auto rounded-xl border border-line bg-surface-2 p-3 pr-20 text-xs leading-relaxed">
-        <code>{code}</code>
+        <code>
+          {shell
+            ? code.split("\n").map((line, i) => (
+                <span
+                  key={i}
+                  className={
+                    line.trimStart().startsWith("#")
+                      ? "text-muted"
+                      : "font-bold text-ink"
+                  }
+                >
+                  {line}
+                  {"\n"}
+                </span>
+              ))
+            : code}
+        </code>
       </pre>
       <button
         type="button"

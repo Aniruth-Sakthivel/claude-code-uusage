@@ -11,11 +11,16 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # Canonical public origin. The generated enrollment commands bake this into
+  # `meterhouse register --server ...`, so it must be the site's current URL.
+  # Pinned here rather than relying on Netlify's automatic `URL`, which kept
+  # resolving to the old claude-code-usage.netlify.app name after the rename.
+  PUBLIC_URL = "https://meterhouse.netlify.app"
   # These four are non-sensitive config values (a port number, a mode name, an
   # allow-list, a public repo URL) whose short/generic values happen to match
   # substrings across docs and code. Netlify's secret scanner otherwise flags
   # them as leaked secrets and fails every build.
-  SECRETS_SCAN_OMIT_KEYS = "PORT,NODE_ENV,CORS_ORIGINS,AGENT_REPO_URL"
+  SECRETS_SCAN_OMIT_KEYS = "PORT,NODE_ENV,CORS_ORIGINS,AGENT_REPO_URL,PUBLIC_URL"
 
 [functions]
   directory = "netlify/functions"
