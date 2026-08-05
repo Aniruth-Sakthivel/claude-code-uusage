@@ -2,6 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+/** Local API target, shared by `vite dev` and `vite preview`. */
+const API_PROXY = { "/api": "http://127.0.0.1:8000" };
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -18,6 +21,15 @@ export default defineConfig({
     port: 5173,
     // Proxy API calls to the local Node API in dev, mirroring the same-origin
     // setup Netlify provides in production (so there are no CORS hoops).
-    proxy: { "/api": "http://127.0.0.1:8000" },
+    proxy: API_PROXY,
+  },
+  /**
+   * `vite preview` does NOT read `server.proxy`, so without this every
+   * `/api/v1/*` call fell through to the SPA fallback and came back as
+   * index.html with a 200 — surfacing as "JSON.parse: unexpected character at
+   * line 1 column 1" instead of anything actionable.
+   */
+  preview: {
+    proxy: API_PROXY,
   },
 });

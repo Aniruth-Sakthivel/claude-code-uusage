@@ -34,6 +34,20 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
   onUnauthorized = handler;
 }
 
+/**
+ * True when the response body is actually JSON.
+ *
+ * Worth checking because the failure it guards against is silent and
+ * misleading: when the API isn't reachable, a static server (`vite preview`,
+ * or Netlify's SPA fallback if the function failed to deploy) answers
+ * `/api/v1/...` with `index.html` and a **200**. Parsing that yields
+ * "JSON.parse: unexpected character at line 1 column 1" — an error that says
+ * nothing about the real problem.
+ */
+function isJson(res: Response): boolean {
+  return (res.headers.get("content-type") ?? "").toLowerCase().includes("json");
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const {
     data: { session },
@@ -65,6 +79,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (res.status === 204) return undefined as T;
+
+  if (!isJson(res)) {
+    throw new ApiError(
+      res.status,
+      `The API returned a non-JSON response for ${path}. The API server is ` +
+        `probably not reachable — requests are falling through to the page ` +
+        `itself. In dev, run the API on :8000; in production, check that the ` +
+        `Netlify function deployed.`,
+    );
+  }
+
   return (await res.json()) as T;
 }
 

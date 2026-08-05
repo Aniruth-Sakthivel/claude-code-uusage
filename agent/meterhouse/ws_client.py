@@ -149,7 +149,14 @@ class WSClient:
 
     async def _sender_loop(self, ws) -> None:
         heartbeat_interval = self._cfg.ws_heartbeat_interval_seconds
-        last_heartbeat = 0.0
+        # Anchor to connect time, NOT 0.0. `time.monotonic()` is an arbitrary
+        # large reading (system uptime on most platforms), so comparing it
+        # against 0.0 made the first iteration fire a heartbeat on any machine
+        # up longer than the interval — and not on a freshly booted one. That
+        # made behaviour, and the tests covering it, depend on host uptime.
+        # The server already registers presence when the socket connects, so
+        # the first heartbeat is due one full interval later.
+        last_heartbeat = time.monotonic()
         while True:
             now = time.monotonic()
             if now - last_heartbeat >= heartbeat_interval:

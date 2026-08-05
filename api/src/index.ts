@@ -35,7 +35,21 @@ import { usageRoutes } from "./routes/usage.js";
 
 export const VERSION = "1.0.0";
 
-export async function buildApp(): Promise<FastifyInstance> {
+export interface BuildOptions {
+  /**
+   * Compress responses inside Fastify.
+   *
+   * Must be OFF behind Netlify. The function adapter returns `res.rawPayload`
+   * (the encoded bytes) while dropping `content-encoding`, because Netlify's
+   * edge sets its own — so a gzipped body would arrive labelled
+   * `application/json` and fail to parse at byte 1. The edge compresses on the
+   * way out anyway, making in-function compression redundant there.
+   */
+  compression?: boolean;
+}
+
+export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance> {
+  const { compression = true } = opts;
   const app = Fastify({
     logger: config.isTest ? false : { level: config.isProduction ? "warn" : "info" },
     // A real UUID (not Fastify's default sequential "req-1", "req-2", ...) so
@@ -58,7 +72,10 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Automatic gzip/brotli response compression — safe to apply globally,
   // operates purely on the outgoing body after the handler has already run.
-  await app.register(compress, { global: true });
+  // Disabled under the Netlify adapter; see BuildOptions.compression.
+  if (compression) {
+    await app.register(compress, { global: true });
+  }
 
   // Computes an ETag per response and handles If-None-Match with a 304,
   // saving the body transfer on unchanged data. Equally safe to apply
