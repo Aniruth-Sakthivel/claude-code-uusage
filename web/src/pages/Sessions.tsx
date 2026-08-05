@@ -155,6 +155,9 @@ export function Sessions() {
     queryKey: qk.people(range),
     queryFn: () => api.get<PeopleResponse>(`/people?range=${range}`),
     enabled: canSeeEveryone,
+    // Each row carries its agent's live scan state; the countdown ticks
+    // locally, but the state behind it has to be refreshed to stay true.
+    refetchInterval: 15_000,
   });
 
   const people = useMemo(() => q.data?.people ?? [], [q.data]);

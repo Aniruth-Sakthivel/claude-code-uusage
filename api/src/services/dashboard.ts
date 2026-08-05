@@ -3,6 +3,7 @@
  */
 
 import { deriveAgentHealth } from "../core/agentHealth.js";
+import { deriveScanActivity } from "../core/scanActivity.js";
 import * as repo from "../repositories/dashboard.js";
 import { isEmptyScope, type Allowed } from "../repositories/scope.js";
 import {
@@ -143,6 +144,10 @@ export async function decorateSystems(allowed: Allowed) {
       // Graded liveness alongside the binary flag: "offline" cannot tell a
       // sleeping laptop from an agent that died when its terminal closed.
       ...deriveAgentHealth(s.lastSeenAt, now),
+      // What the agent says it is doing right now, plus the next-scan
+      // countdown — the part of the row an admin watches to confirm the agent
+      // is alive rather than merely enrolled.
+      ...deriveScanActivity(s, now),
       total_tokens: st?.totalTokens ?? 0,
       sessions: st?.sessions ?? 0,
       projects: st?.projects ?? 0,

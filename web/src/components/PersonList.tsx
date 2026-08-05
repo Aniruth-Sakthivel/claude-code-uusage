@@ -10,6 +10,7 @@ import { Pin, PinOff } from "lucide-react";
 import { useMemo } from "react";
 
 import type { PersonRow } from "../api/types";
+import { ScanTimer } from "./ScanActivity";
 import { Badge, Input } from "./ui";
 import { fmtRelative, fmtTokens } from "../lib/format";
 
@@ -74,6 +75,15 @@ function PersonButton({
             <span className="tnum">{fmtTokens(person.tokens_range)}</span>
             <span aria-hidden>·</span>
             <span className="tnum">{fmtRelative(person.last_active)}</span>
+            {/* The agent's scan cadence, next to the person whose usage it
+                collects — so a row that has stopped updating is visibly a
+                stopped agent rather than someone who did no work. */}
+            {person.scan && (
+              <>
+                <span aria-hidden>·</span>
+                <ScanTimer scan={person.scan} />
+              </>
+            )}
           </span>
         </span>
       </button>

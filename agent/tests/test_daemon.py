@@ -124,6 +124,83 @@ def test_command_pause_stops_scheduled_scans_but_not_manual(tmp_path, monkeypatc
     asyncio.run(scenario())
 
 
+def test_wait_scans_early_when_claude_activity_appears(tmp_path, monkeypatch):
+    """Someone starting a session must not wait out a whole interval before
+    anything reaches the dashboard."""
+    calls = []
+
+    def fake_scan(*, system_id, db_path, verbose):
+        calls.append("scan")
+        return {"new": 1, "updated": 0, "skipped": 0, "events_inserted": 1}
+
+    monkeypatch.setattr(daemon_mod, "run_scan", fake_scan)
+    monkeypatch.setattr(daemon_mod, "ACTIVITY_POLL_SECONDS", 0.01)
+
+    cfg = AgentConfig(scan_interval_seconds=3600)  # far away; only activity can fire
+    d = Daemon(cfg, make_identity(tmp_path), db_path=tmp_path / "usage.db")
+
+    busy = iter([True])
+    d._activity.changed = lambda: next(busy, False)
+    d._activity.mark_scanned = lambda: None
+
+    async def scenario():
+        waiter = asyncio.create_task(d._wait_for_next_scan())
+        await asyncio.sleep(0.2)
+        d._stop.set()
+        await waiter
+
+    asyncio.run(scenario())
+    assert calls == ["scan"]
+
+
+def test_wait_does_not_scan_early_while_paused(tmp_path, monkeypatch):
+    """Pause means pause — activity must not quietly override the operator."""
+    calls = []
+
+    def fake_scan(*, system_id, db_path, verbose):
+        calls.append("scan")
+        return {"new": 0, "updated": 0, "skipped": 0, "events_inserted": 0}
+
+    monkeypatch.setattr(daemon_mod, "run_scan", fake_scan)
+    monkeypatch.setattr(daemon_mod, "ACTIVITY_POLL_SECONDS", 0.01)
+
+    d = Daemon(
+        AgentConfig(scan_interval_seconds=3600),
+        make_identity(tmp_path),
+        db_path=tmp_path / "usage.db",
+    )
+    d._paused.set()
+    d._activity.changed = lambda: True
+    d._activity.mark_scanned = lambda: None
+
+    async def scenario():
+        waiter = asyncio.create_task(d._wait_for_next_scan())
+        await asyncio.sleep(0.15)
+        d._stop.set()
+        await waiter
+
+    asyncio.run(scenario())
+    assert calls == []
+
+
+def test_wait_returns_false_when_stopping(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon_mod, "ACTIVITY_POLL_SECONDS", 0.01)
+    d = Daemon(
+        AgentConfig(scan_interval_seconds=3600),
+        make_identity(tmp_path),
+        db_path=tmp_path / "usage.db",
+    )
+    d._activity.changed = lambda: False
+
+    async def scenario():
+        waiter = asyncio.create_task(d._wait_for_next_scan())
+        await asyncio.sleep(0.05)
+        d._stop.set()
+        return await waiter
+
+    assert asyncio.run(scenario()) is False
+
+
 def test_command_set_config_applies_allowlisted_fields_only(tmp_path):
     cfg = AgentConfig()
     saved = []

@@ -329,14 +329,22 @@ function manualSetupBlock(
     "",
     "# 5 - keep it updating on its own. Pick ONE:",
     "",
-    "#   (a) Background, survives logout/reboot, NO window to keep open.",
-    "#       Scheduled task runs scan+sync every 15 minutes:",
+    "#   (a) Background, survives closing this window and reboots. Runs one",
+    "#       scan+sync cycle every 15 minutes. `once` is a single command on",
+    "#       purpose: chaining scan && sync inside a task action needs nested",
+    "#       quoting that frequently registers a task which never actually runs.",
     "$py = (Get-Command python).Source",
-    "schtasks /Create /SC MINUTE /MO 15 /TN \"Meterhouse Scan+Sync\" /F /ST 00:00 " +
-      "/TR \"cmd /c $py -m meterhouse scan --quiet && $py -m meterhouse sync --quiet\"",
+    "$pyw = Join-Path (Split-Path $py) 'pythonw.exe'   # no console window",
+    "$exe = if (Test-Path $pyw) { $pyw } else { $py }",
+    "$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse once --quiet'",
+    "$trg = New-ScheduledTaskTrigger -Once -At (Get-Date) " +
+      "-RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)",
+    "Register-ScheduledTask -TaskName 'Meterhouse Scan+Sync' -Action $act -Trigger $trg -Force",
     "",
-    "#   (b) Foreground daemon - scans every 60s, but ONLY while this window",
-    "#       stays open. Closing the terminal stops it. Good for a quick test:",
+    "#   (b) The daemon - scans every 60s and holds the real-time connection.",
+    "#       Started like this it dies with the window; the one-line installer",
+    "#       registers it as a scheduled task instead, which is what survives.",
+    "#       Useful here for watching the log output while diagnosing something:",
     "python -m meterhouse daemon",
     "",
     "# Optional: if you would rather type 'meterhouse' than 'python -m meterhouse',",
@@ -345,11 +353,13 @@ function manualSetupBlock(
     "#   [Environment]::SetEnvironmentVariable('Path', \"$env:Path;$s\", 'User')",
     "",
     "# --- Uninstalling this PC ---",
-    "# Remove whichever scheduled tasks exist (the first two are created by the",
-    "# one-line installer, the third by option (a) above). Errors are harmless.",
+    "# Remove whichever scheduled tasks exist (the last two are names used by",
+    "# older installers). Errors are harmless.",
+    'schtasks /Delete /TN "Meterhouse Agent" /F',
+    'schtasks /Delete /TN "Meterhouse Scan+Sync" /F',
+    'schtasks /Delete /TN "Meterhouse Agent Check" /F',
     'schtasks /Delete /TN "Meterhouse Daemon" /F',
     'schtasks /Delete /TN "Meterhouse Daemon Watchdog" /F',
-    'schtasks /Delete /TN "Meterhouse Scan+Sync" /F',
     "# Remove the agent package and its local data (never touches ~/.claude/projects):",
     "python -m pip uninstall meterhouse-rotor -y",
     'Remove-Item -Recurse -Force "$env:USERPROFILE\\.claude\\meterhouse" -ErrorAction SilentlyContinue',
@@ -381,10 +391,12 @@ export function renderInstallScript(opts: {
   const q = pwshQuote;
 
   return `# Meterhouse agent setup - generated for ${displayName}
-# This script installs the agent (pip), connects this PC, and starts a
-# persistent daemon: scans every 60s (configurable) and, if enabled, streams
-# status over a WebSocket. A watchdog task checks every minute that the
-# daemon is alive and restarts it if not.
+# Installs the agent (pip), connects this PC, and registers two scheduled tasks
+# so reporting continues after this window is closed and after a reboot:
+#   - the daemon (scans every 60s, holds the real-time connection), started at
+#     logon and re-checked every 5 minutes in case it stopped;
+#   - a plain scan+sync every 15 minutes as a fallback.
+# Closing this window is expected and safe.
 
 $ErrorActionPreference = 'Stop'
 
@@ -448,71 +460,132 @@ Write-Host 'Scanning Claude Code transcripts (this may take a moment)...'
 Write-Host 'Sending usage to the dashboard...'
 & $runner @('sync')
 
-# --- 5. resolve a single launch target for the daemon + watchdog -------------
-# Start-Process needs one concrete FilePath, not the "py -3" two-token form,
-# so the interpreter is resolved to its actual executable.
+# --- 5. resolve a windowless launch target ------------------------------------
+# Two separate problems are being solved here.
+#
+# 1. A console process launched from this window is attached to this window's
+#    console. Closing the terminal sends it CTRL_CLOSE_EVENT and Windows kills
+#    it - which is exactly why usage stopped flowing the moment someone closed
+#    the shell they pasted the installer into. pythonw.exe (pyw.exe for the
+#    launcher) is the GUI-subsystem interpreter: it gets no console at all, so
+#    there is no console to close and nothing to signal it.
+#
+# 2. Scheduled tasks are given the executable and its arguments as separate
+#    values, never a single command string. Every quoting hazard that used to
+#    break registration (a Python path containing spaces, the nested quotes in
+#    a "cmd /c a && b" action) disappears with it.
 $pyCmd = Get-Command $py[0] -ErrorAction SilentlyContinue
 $launchFile = if ($pyCmd) { $pyCmd.Source } else { $py[0] }
-$launchArgs = if ($py.Count -gt 1) { $py[1..($py.Length-1)] + @('-m', 'meterhouse', 'daemon') } else { @('-m', 'meterhouse', 'daemon') }
+$pyDir = Split-Path $launchFile -Parent
+$windowless = if ($py[0] -eq 'py') { Join-Path $pyDir 'pyw.exe' } else { Join-Path $pyDir 'pythonw.exe' }
+$daemonFile = if (Test-Path $windowless) { $windowless } else { $launchFile }
+$pyPrefix = if ($py.Count -gt 1) { $py[1..($py.Length-1)] } else { @() }
+$daemonArgs = $pyPrefix + @('-m', 'meterhouse', 'daemon')
+$onceArgs   = $pyPrefix + @('-m', 'meterhouse', 'once', '--quiet')
 
-# --- 6. start the daemon now, and at every logon going forward ---------------
-Write-Host 'Starting the Meterhouse daemon (scans every 60s in the background)...'
-Start-Process -FilePath $launchFile -ArgumentList $launchArgs -WindowStyle Hidden
+# --- 6. register the background tasks ----------------------------------------
+# Two tasks, on purpose:
+#
+#   Meterhouse Agent      the daemon. Started at logon AND re-checked every 5
+#                         minutes, so a daemon that was killed (antivirus, a
+#                         crash, sleep/resume) is back within minutes instead of
+#                         waiting for the next logon. Relaunching while one is
+#                         already running is harmless - the daemon takes a
+#                         single-instance lock and a duplicate exits at once.
+#
+#   Meterhouse Scan+Sync  a plain scan+sync every 15 minutes. It is the safety
+#                         net for machines where the daemon cannot stay alive:
+#                         usage keeps arriving, and - because commands queued in
+#                         the dashboard are collected on the same call - the
+#                         admin's "Scan now" and config pushes still get through.
+#
+# Both run only while this user is logged on, which is all a per-user agent
+# needs, and neither requires administrator rights to register.
+function Register-MeterhouseTask {
+  param([string]$Name, [string]$Execute, [string[]]$Arguments, [object[]]$Triggers)
 
-Write-Host 'Waiting briefly for the agent to start...'
-Start-Sleep -Seconds 5
-Write-Host 'Checking local agent health:'
-& $runner @('health')
-
-$daemonTask = 'Meterhouse Daemon'
-$daemonAction = '"' + $launchFile + '" ' + ($launchArgs -join ' ')
-schtasks /Delete /TN $daemonTask /F 2>&1 | Out-Null
-schtasks /Create /SC ONLOGON /TN $daemonTask /TR $daemonAction /RL LIMITED /F 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-  Write-Host 'Scheduled the daemon to start automatically at logon.'
-} else {
-  Write-Host 'Could not schedule the logon task (the daemon is still running now).' -ForegroundColor Yellow
+  $action = New-ScheduledTaskAction -Execute $Execute -Argument ($Arguments -join ' ')
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries \`
+    -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+  $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" \`
+    -LogonType Interactive -RunLevel Limited
+  Register-ScheduledTask -TaskName $Name -Action $action -Trigger $Triggers \`
+    -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
 }
 
-# --- 7. watchdog: if the daemon dies, restart it within a minute -------------
-# A standalone .ps1 (not an inline schtasks /TR command) so the quoting stays
-# simple and easy to inspect/debug independently. Built from single-quoted
-# literal lines (no interpolation, no escaping) with only the few dynamic
-# values spliced in via string concatenation - deliberately avoiding
-# PowerShell's backtick escape character inside this generated JS template,
-# since a stray backtick here would terminate the JS string early.
-$watchdogPath = Join-Path $InstallDir 'watchdog.ps1'
-$watchdogArgsLiteral = ($launchArgs -join "','")
-$watchdogLines = @(
-  '$ErrorActionPreference = ''SilentlyContinue''',
-  '$stale = $true',
-  'if (Test-Path ''' + $HealthFile + ''') {',
-  '  try {',
-  '    $h = Get-Content ''' + $HealthFile + ''' -Raw | ConvertFrom-Json',
-  '    $updated = [DateTime]::Parse($h.updated_at).ToUniversalTime()',
-  '    if (((Get-Date).ToUniversalTime() - $updated).TotalSeconds -lt 180) { $stale = $false }',
-  '  } catch {}',
-  '}',
-  'if ($stale) {',
-  '  Start-Process -FilePath ''' + $launchFile + ''' -ArgumentList @(''' + $watchdogArgsLiteral + ''') -WindowStyle Hidden',
-  '}'
-)
-Set-Content -Path $watchdogPath -Value $watchdogLines -Encoding UTF8
+# Old task names from previous installs - removed so an upgrade does not leave a
+# second, differently-configured agent running alongside the new one.
+foreach ($old in @('Meterhouse Daemon', 'Meterhouse Daemon Watchdog')) {
+  schtasks /Delete /TN $old /F 2>&1 | Out-Null
+}
+Remove-Item (Join-Path $InstallDir 'watchdog.ps1') -ErrorAction SilentlyContinue
 
-$watchdogTask = 'Meterhouse Daemon Watchdog'
-$watchdogAction = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $watchdogPath + '"'
-schtasks /Delete /TN $watchdogTask /F 2>&1 | Out-Null
-schtasks /Create /SC MINUTE /MO 1 /TN $watchdogTask /TR $watchdogAction /RL LIMITED /F 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-  Write-Host 'Watchdog active: checks every minute and restarts the daemon if it stops.'
-} else {
-  Write-Host 'Could not schedule the watchdog task.' -ForegroundColor Yellow
+$tasksOk = $true
+try {
+  $logon = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"
+  # A "once, then repeat forever" trigger. RepetitionDuration has to be a long
+  # finite span; [TimeSpan]::MaxValue is rejected by the task scheduler.
+  $every5 = New-ScheduledTaskTrigger -Once -At (Get-Date) \`
+    -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+  Register-MeterhouseTask -Name 'Meterhouse Agent' -Execute $daemonFile \`
+    -Arguments $daemonArgs -Triggers @($logon, $every5)
+
+  $every15 = New-ScheduledTaskTrigger -Once -At (Get-Date) \`
+    -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
+  Register-MeterhouseTask -Name 'Meterhouse Scan+Sync' -Execute $daemonFile \`
+    -Arguments $onceArgs -Triggers @($every15)
+
+  Write-Host 'Background tasks registered:'
+  Write-Host '  - Meterhouse Agent      (starts at logon, re-checked every 5 minutes)'
+  Write-Host '  - Meterhouse Scan+Sync  (every 15 minutes, fallback)'
+} catch {
+  $tasksOk = $false
+  Write-Host ("Could not register the scheduled tasks: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+  Write-Host 'Falling back to schtasks...' -ForegroundColor Yellow
+  # Fallback for machines where the ScheduledTasks module is unavailable. The
+  # action is written to a .cmd file first so the /TR value is a single path
+  # with no embedded quotes to mangle.
+  $launcher = Join-Path $InstallDir 'agent.cmd'
+  Set-Content -Path $launcher -Encoding ASCII -Value @(
+    '@echo off',
+    'start "" /B "' + $daemonFile + '" ' + ($daemonArgs -join ' ')
+  )
+  schtasks /Create /SC ONLOGON /TN 'Meterhouse Agent' /TR "\`"$launcher\`"" /RL LIMITED /F 2>&1 | Out-Null
+  schtasks /Create /SC MINUTE /MO 5 /TN 'Meterhouse Agent Check' /TR "\`"$launcher\`"" /RL LIMITED /F 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) { $tasksOk = $true; Write-Host 'Registered via schtasks.' }
+}
+
+# --- 7. start it now and confirm it is actually alive -------------------------
+Write-Host 'Starting the Meterhouse agent in the background...'
+Start-Process -FilePath $daemonFile -ArgumentList $daemonArgs -WindowStyle Hidden
+
+Write-Host 'Waiting for the agent to report in...'
+Start-Sleep -Seconds 8
+& $runner @('health')
+
+$alive = $false
+if (Test-Path $HealthFile) {
+  try {
+    $h = Get-Content $HealthFile -Raw | ConvertFrom-Json
+    $age = ((Get-Date).ToUniversalTime() - [DateTime]::Parse($h.updated_at).ToUniversalTime()).TotalSeconds
+    if ($age -lt 120) { $alive = $true }
+  } catch {}
 }
 
 Write-Host ''
-Write-Host 'Done. This PC now reports to your Meterhouse dashboard.' -ForegroundColor Green
-Write-Host 'Run "meterhouse health" on this PC anytime to verify the local agent status.'
-Write-Host ("Open {0} to see it." -f $Server)
+if ($alive) {
+  Write-Host 'Done. The agent is running in the background.' -ForegroundColor Green
+  Write-Host 'You can close this window - it keeps reporting after you close it, and restarts itself at logon.'
+} else {
+  Write-Host 'The agent was installed but did not report health within 8 seconds.' -ForegroundColor Yellow
+  Write-Host 'Usage will still reach the dashboard via the 15-minute Scan+Sync task.'
+  Write-Host 'To see what went wrong, run this and read the output:'
+  Write-Host ('  {0} -m meterhouse daemon' -f $launchFile)
+}
+if (-not $tasksOk) {
+  Write-Host 'No scheduled task could be registered - the agent will NOT restart after a reboot.' -ForegroundColor Yellow
+}
+Write-Host ("Open {0} to see this PC." -f $Server)
 Write-Host ''
 `;
 }

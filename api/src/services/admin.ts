@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 
+import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { apiKeys, systems, users } from "../db/schema.js";
 import { generateApiKey } from "../core/auth-agent.js";
@@ -211,9 +212,11 @@ export interface CreateUserInput {
 /**
  * Create a user.
  *
- * With no password we send a Supabase invite and the person chooses their own —
- * this replaces having an admin read a password out to someone. With a password
- * the account is created directly (useful for scripted/offline setups).
+ * With no password we send a Supabase invite. The invite email carries both the
+ * acceptance link and default login details (their email plus the shared
+ * starter password), so the person can sign in either way — no admin reading a
+ * password out to someone. With a password the account is created directly
+ * (useful for scripted/offline setups).
  */
 export async function createUser(
   actor: Principal,
@@ -266,7 +269,13 @@ export async function createUser(
   });
 
   const view = await repo.getUserView(userId);
-  return { view: view!, invited };
+  // Echoed back so the admin can relay the credentials if the email is delayed
+  // or filtered — it is the same shared starter password the invite contains.
+  return {
+    view: view!,
+    invited,
+    defaultPassword: invited ? config.INVITE_DEFAULT_PASSWORD : undefined,
+  };
 }
 
 export interface UpdateUserInput {

@@ -56,7 +56,7 @@ export async function markDelivered(ids: number[], conn: DbLike = db): Promise<v
 export async function ackCommand(
   id: number,
   systemId: string,
-  status: "acked" | "failed",
+  status: "acked" | "failed" | "skipped",
   detail: string,
   conn: DbLike = db,
 ): Promise<AgentCommandRow | null> {

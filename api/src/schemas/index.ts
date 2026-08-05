@@ -103,8 +103,26 @@ export const pendingCommandOut = z.object({
 export const commandsField = z.array(pendingCommandOut).default([]);
 
 export const commandAckRequest = z.object({
-  status: z.enum(["acked", "failed"]),
+  // "skipped" is what a one-shot `meterhouse once` reports for pause/resume —
+  // those govern a running scan loop it does not have. Rejecting it left the
+  // ack 400ing, so the command stayed pending and was re-attempted on every
+  // single sync while the dashboard showed it stuck on "Pending" forever.
+  status: z.enum(["acked", "failed", "skipped"]),
   detail: z.string().max(2000).default(""),
+});
+
+/**
+ * What the agent is doing, pushed as it happens.
+ *
+ * Every field is optional so an older agent's payload still validates — this
+ * endpoint must never be the reason a machine stops checking in.
+ */
+export const agentStatusRequest = z.object({
+  state: z.enum(["idle", "scanning", "scanned", "syncing", "paused", "error"]),
+  detail: z.string().max(255).default(""),
+  scan_interval_seconds: z.number().int().min(1).max(86_400).nullish(),
+  last_scan_at: z.string().datetime({ offset: true }).nullish(),
+  last_scan_duration_ms: z.number().min(0).max(86_400_000).nullish(),
 });
 
 // ── agent endpoints ───────────────────────────────────────────────────────────

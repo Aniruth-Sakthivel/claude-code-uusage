@@ -8,6 +8,7 @@ import { api } from "../api/client";
 import { fleetKeys, qk } from "../api/queryKeys";
 import type { SystemRow } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { ScanActivity } from "../components/ScanActivity";
 import { SystemCommandsPanel } from "../components/SystemCommandsPanel";
 import {
   Button,
@@ -40,7 +41,10 @@ export function Systems() {
   const q = useQuery({
     queryKey: qk.systems,
     queryFn: () => api.get<SystemRow[]>("/systems"),
-    refetchInterval: 60_000,
+    // A scan takes seconds. At the old 60s poll the "Scanning…" state was
+    // usually over before the table ever saw it, which is precisely the moment
+    // an admin is watching for.
+    refetchInterval: 10_000,
   });
 
   const remove = useMutation({
@@ -131,6 +135,7 @@ export function Systems() {
                     >
                       Status
                     </Th>
+                    <Th>Scan activity</Th>
                     <Th>Owner</Th>
                     <Th>Environment</Th>
                     <Th
@@ -165,6 +170,9 @@ export function Systems() {
                   </Td>
                   <Td>
                     <StatusPill status={s.status} neverSynced={s.never_synced} health={s.health} reason={s.reason} />
+                  </Td>
+                  <Td>
+                    <ScanActivity scan={s} neverReported={s.never_synced} />
                   </Td>
                   <Td className="text-ink-2">{s.owner || "—"}</Td>
                   <Td className="text-ink-2">{s.environment || "—"}</Td>

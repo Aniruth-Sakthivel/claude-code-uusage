@@ -50,6 +50,14 @@ const schema = z.object({
    * repo's GitHub Releases.
    */
   AGENT_EXE_URL: z.string().optional(),
+  /**
+   * Starter password given to every invited user. It is set on the Auth account
+   * and repeated in the invite email next to the acceptance link, so someone can
+   * sign in straight away with just their email address. Override per-deployment
+   * if a different starter secret is wanted; users should change it after first
+   * login (Supabase "forgot password" or an admin password reset).
+   */
+  INVITE_DEFAULT_PASSWORD: z.string().min(8).default("Dreams@99"),
   /** Comma-separated CORS origins. Empty in production (same-origin on Netlify). */
   CORS_ORIGINS: z.string().default("http://localhost:5173,http://127.0.0.1:5173"),
   /**
@@ -77,6 +85,10 @@ const parsed = schema.safeParse({
   PUBLIC_URL: pick("PUBLIC_URL", "URL", "DEPLOY_PRIME_URL"), // Netlify sets URL
   AGENT_REPO_URL: pick("AGENT_REPO_URL"),
   AGENT_EXE_URL: pick("AGENT_EXE_URL"),
+  INVITE_DEFAULT_PASSWORD: pick(
+    "INVITE_DEFAULT_PASSWORD",
+    "METERHOUSE_INVITE_DEFAULT_PASSWORD",
+  ),
   CORS_ORIGINS: pick("CORS_ORIGINS", "METERHOUSE_CORS_ORIGINS"),
   WS_PORT: pick("WS_PORT"),
   PUBLIC_WS_URL: pick("PUBLIC_WS_URL"),

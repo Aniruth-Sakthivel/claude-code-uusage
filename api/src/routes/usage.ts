@@ -11,7 +11,12 @@ import { db } from "../db/client.js";
 import { systems } from "../db/schema.js";
 import * as commandsRepo from "../repositories/commands.js";
 import { ingestEvents, ingestSessionExtras, type IncomingEvent } from "../repositories/usage.js";
-import { commandAckRequest, registerRequest, syncRequest } from "../schemas/index.js";
+import {
+  agentStatusRequest,
+  commandAckRequest,
+  registerRequest,
+  syncRequest,
+} from "../schemas/index.js";
 
 /** Pending commands for this system, marked delivered so re-checking-in
  * doesn't re-count them as "just sent" — they stay pending (and so keep
@@ -51,6 +56,37 @@ export async function usageRoutes(app: FastifyInstance) {
       .set({ lastSeenAt: new Date() })
       .where(eq(systems.systemId, system.systemId));
     return { ok: true, commands: await pendingCommandsFor(system.systemId) };
+  });
+
+  /**
+   * Agent reports what it is doing right now — "scanning", then "scanned",
+   * then "syncing", then "idle".
+   *
+   * Separate from heartbeat because it fires several times per cycle and must
+   * stay cheap: no command lookup, one UPDATE. It still refreshes `lastSeenAt`,
+   * so a machine mid-scan never reads as silent.
+   */
+  app.post("/api/v1/systems/status", { preHandler: requireAgent }, async (req) => {
+    const system = currentAgent(req);
+    const body = agentStatusRequest.parse(req.body ?? {});
+    const now = new Date();
+
+    const patch: Record<string, unknown> = {
+      lastSeenAt: now,
+      agentStatus: body.state,
+      agentStatusAt: now,
+      agentStatusDetail: body.detail,
+    };
+    if (body.scan_interval_seconds != null) {
+      patch.scanIntervalSeconds = body.scan_interval_seconds;
+    }
+    if (body.last_scan_at) patch.lastScanAt = new Date(body.last_scan_at);
+    if (body.last_scan_duration_ms != null) {
+      patch.lastScanDurationMs = Math.round(body.last_scan_duration_ms);
+    }
+
+    await db.update(systems).set(patch).where(eq(systems.systemId, system.systemId));
+    return { ok: true };
   });
 
   /** Agent reports the outcome of a delivered command. */

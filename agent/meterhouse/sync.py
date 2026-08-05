@@ -98,6 +98,26 @@ class SyncClient:
     def heartbeat(self) -> dict:
         return self._post("/api/v1/systems/heartbeat", {})
 
+    def report_status(self, state: str, detail: str = "", *,
+                      scan_interval_seconds: int | None = None,
+                      last_scan_at: str | None = None,
+                      last_scan_duration_ms: float | None = None) -> dict:
+        """Tell the dashboard what this agent is doing right now.
+
+        Sent at each step of a cycle (scanning -> scanned -> syncing -> idle)
+        so an admin can watch a machine work instead of inferring it from a
+        "last seen" timestamp that looks identical whether the agent is
+        scanning or wedged.
+        """
+        payload: dict = {"state": state, "detail": detail[:255]}
+        if scan_interval_seconds is not None:
+            payload["scan_interval_seconds"] = scan_interval_seconds
+        if last_scan_at is not None:
+            payload["last_scan_at"] = last_scan_at
+        if last_scan_duration_ms is not None:
+            payload["last_scan_duration_ms"] = last_scan_duration_ms
+        return self._post("/api/v1/systems/status", payload)
+
     def ack_command(self, command_id: int, status: str, detail: str = "") -> dict:
         """Report the outcome of a fleet-management command back to the
         server. Until this is called the command stays 'pending' and keeps

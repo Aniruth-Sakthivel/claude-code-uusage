@@ -12,6 +12,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { PersonDetail as Detail, PersonSessionsResponse } from "../api/types";
+import { ScanActivity } from "./ScanActivity";
 import {
   Badge,
   Card,
@@ -115,7 +116,16 @@ export function PersonDetailPanel({ personId, range }: { personId: number; range
               </div>
             )}
           </div>
-          <StatusPill status={person.status} />
+          <div className="flex flex-col items-end gap-2">
+            <StatusPill status={person.status} />
+            {/* Agent activity, not person activity: whether their usage is
+                being collected right now, and when the next scan is due. */}
+            {person.scan && (
+              <div className="text-right">
+                <ScanActivity scan={person.scan} neverReported={person.system_count === 0} />
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">

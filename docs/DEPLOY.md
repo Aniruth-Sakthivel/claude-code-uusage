@@ -39,6 +39,39 @@ Admins invite users by email. If your project has no SMTP configured, either set
 one up under **Authentication → Emails**, or create accounts with an explicit
 password (the "Set a password instead" option on the invite form).
 
+#### Invite email template
+
+Every invited account is created with a default password (`Dreams@99`, override
+with the `INVITE_DEFAULT_PASSWORD` environment variable) and a pre-confirmed
+email address, so the person can sign in immediately with their own email
+address — the link is only needed if they want to choose their own password.
+
+The API passes those details to Supabase as invite metadata, but the email body
+lives in the dashboard: **Authentication → Emails → Invite user**. Paste in
+[invite-email-template.html](invite-email-template.html) (reproduced below) so
+the credentials actually appear — Supabase's stock body shows only a link:
+
+```html
+<h2>You have been invited to Meterhouse</h2>
+
+<p>An administrator has created an account for you. Sign in with:</p>
+
+<table>
+  <tr><td><strong>Email</strong></td><td>{{ .Data.default_email }}</td></tr>
+  <tr><td><strong>Password</strong></td><td>{{ .Data.default_password }}</td></tr>
+</table>
+
+<p><a href="{{ .ConfirmationURL }}">Accept the invitation and set your own password</a></p>
+
+<p>Please change the default password after your first sign-in.</p>
+```
+
+`{{ .Data.* }}` reads the invite metadata (`default_email`, `default_password`,
+`full_name`) set in `api/src/core/supabase-admin.ts` — renaming those keys means
+editing this template to match. Sending a shared starter password by email is a
+deliberate trade-off for onboarding convenience; treat it as a first-login
+credential, not a secret.
+
 ---
 
 ## 2. Apply migrations
@@ -130,7 +163,11 @@ schtasks /Delete /TN "Meterhouse Scan+Sync" /F
 | `health` reports `database: error` | `DATABASE_URL` wrong, or using the direct host instead of the pooler. |
 | `Tenant or user not found` | Wrong pooler region. Copy the exact URI from **Connect**. |
 | Function times out on first request | Cold start plus a slow first connection. The configured timeout is 26s; retry. |
-| Invite emails never arrive | No SMTP configured in Supabase. Use the "set a password" option, or configure SMTP. |
+| A PC stops reporting when the user closes the terminal | Old installs launched the daemon as a child of that console and only re-registered it at logon. Re-run the "Connect this PC" one-liner: it now registers the **Meterhouse Agent** and **Meterhouse Scan+Sync** tasks (windowless, re-checked every 5 minutes) and removes the old *Meterhouse Daemon* / *Watchdog* tasks. |
+| "Scan now" from Agent controls does nothing | Commands are collected on the agent's next check-in, so nothing happens while no agent is running — check the Systems page's scan activity first. Both scheduled tasks collect commands, so a machine with either one picks it up within 15 minutes. |
+| Systems page shows "No report" | The agent has not reported a state in the last 10 minutes. Run `meterhouse health` on that PC: a stale `updated_at` means the daemon is not running. |
+| Invite emails never arrive | No SMTP configured in Supabase. Use the "set a password" option, or configure SMTP. The account still works — the default password is set regardless of whether the mail is delivered. |
+| Invite email shows no login details | The dashboard template still has Supabase's default body. Paste the template from "Invite email template" above. |
 | `unrecognized JWT kid` on user creation | Transient GoTrue error, retried automatically. Persisting means email confirmation is failing — check Supabase auth settings. |
 | Dashboard shows zeros | No agent has synced yet. Check **Systems** for "Never synced". |
 | Agent `scan` finds 0 events | No Claude Code transcripts on that PC — confirm `%USERPROFILE%\.claude\projects\` exists. |

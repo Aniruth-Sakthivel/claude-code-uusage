@@ -43,6 +43,14 @@ class HealthState:
     offline_queue_depth: int = 0
     pid: int = field(default_factory=os.getpid)
 
+    def touch(self) -> None:
+        """Mark the process as alive without changing any counter.
+
+        The daemon calls this on a short fixed timer so `updated_at` reflects
+        liveness rather than scan cadence — see daemon.HEALTH_HEARTBEAT_SECONDS.
+        """
+        self.updated_at = _now()
+
     def record_scan(self, duration_ms: float, error: str | None = None) -> None:
         self.last_scan_at = _now()
         self.last_scan_duration_ms = duration_ms

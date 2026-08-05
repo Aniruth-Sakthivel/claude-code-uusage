@@ -25,7 +25,8 @@ export interface User {
   capabilities: Capability[];
 }
 
-export interface SystemRow {
+/** A machine, including its live agent state (spread in by the API). */
+export interface SystemRow extends ScanActivity {
   system_id: string;
   display_name: string;
   hostname: string;
@@ -55,6 +56,15 @@ export interface SystemRow {
 }
 
 export type AgentHealth = "never" | "healthy" | "late" | "stalled" | "dead";
+
+export type AgentState =
+  | "unknown"
+  | "idle"
+  | "scanning"
+  | "scanned"
+  | "syncing"
+  | "paused"
+  | "error";
 
 export interface SystemCreated {
   system: SystemRow;
@@ -383,6 +393,13 @@ export interface CreateUserPayload {
   password?: string;
 }
 
+/** POST /admin/users — the created user plus how they can get in. */
+export interface CreatedUser extends User {
+  invited: boolean;
+  /** Starter password mailed with the invite; absent when a password was set. */
+  default_password?: string;
+}
+
 export interface UpdateUserPayload {
   full_name?: string | null;
   password?: string | null;
@@ -493,6 +510,21 @@ export interface PersonRow {
   /** null when this window predates prompt collection - render as an em dash. */
   prompts: number | null;
   last_active: string | null;
+  /** Live agent state from this person's most recently reporting machine. */
+  scan: ScanActivity;
+}
+
+/** The shared live-agent shape: also spread onto SystemRow, per machine. */
+export interface ScanActivity {
+  agent_state: AgentState;
+  agent_state_at: string | null;
+  agent_state_detail: string;
+  scanning: boolean;
+  scan_interval_seconds: number | null;
+  last_scan_at: string | null;
+  last_scan_duration_ms: number | null;
+  next_scan_due_at: string | null;
+  server_time: string;
 }
 
 export interface PeopleResponse {

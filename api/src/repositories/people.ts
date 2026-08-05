@@ -28,7 +28,39 @@ import {
   roles,
 } from "../db/schema.js";
 import { isOnline } from "../core/time.js";
+import {
+  deriveScanActivity,
+  type ScanActivityInput,
+  type ScanActivityView,
+} from "../core/scanActivity.js";
 import { isEmptyScope, scopeSystems, type Allowed } from "./scope.js";
+
+/**
+ * The machine that best represents a person's current agent state: one that is
+ * actively scanning if any is, otherwise whichever reported most recently.
+ */
+function liveliest(machines: ScanActivityInput[], now: Date): ScanActivityView {
+  const views = machines.map((m) => ({ m, v: deriveScanActivity(m, now) }));
+  const busy = views.find((x) => x.v.scanning);
+  if (busy) return busy.v;
+
+  let best: (typeof views)[number] | undefined;
+  for (const candidate of views) {
+    const at = candidate.m.agentStatusAt?.getTime() ?? -1;
+    const bestAt = best?.m.agentStatusAt?.getTime() ?? -1;
+    if (at > bestAt) best = candidate;
+  }
+  return best?.v ?? deriveScanActivity(EMPTY_SCAN, now);
+}
+
+const EMPTY_SCAN: ScanActivityInput = {
+  agentStatus: "",
+  agentStatusAt: null,
+  agentStatusDetail: "",
+  scanIntervalSeconds: null,
+  lastScanAt: null,
+  lastScanDurationMs: null,
+};
 
 /** Machines assigned to a person, intersected with what the caller may see. */
 export async function systemIdsForUser(userId: number, allowed: Allowed): Promise<string[]> {
@@ -60,6 +92,13 @@ export interface PersonRow {
   projects: number;
   prompts: number | null;
   last_active: string | null;
+  /**
+   * Live agent state for this person, taken from their most recently reporting
+   * machine. Someone with two PCs is "scanning" if either one is — the question
+   * being answered is "is this person's usage being collected right now?", and
+   * a per-machine breakdown belongs on the Systems page.
+   */
+  scan: ScanActivityView;
 }
 
 /**
@@ -93,17 +132,25 @@ export async function listPeople(
       userId: userSystems.userId,
       systemId: userSystems.systemId,
       lastSeenAt: systems.lastSeenAt,
+      agentStatus: systems.agentStatus,
+      agentStatusAt: systems.agentStatusAt,
+      agentStatusDetail: systems.agentStatusDetail,
+      scanIntervalSeconds: systems.scanIntervalSeconds,
+      lastScanAt: systems.lastScanAt,
+      lastScanDurationMs: systems.lastScanDurationMs,
     })
     .from(userSystems)
     .innerJoin(systems, eq(systems.systemId, userSystems.systemId))
     .where(scopeSystems(userSystems.systemId, allowed));
 
-    const systemsByUser = new Map<number, { id: string; lastSeenAt: Date | null }[]>();
+  type OwnedSystem = ScanActivityInput & { id: string; lastSeenAt: Date | null };
+  const systemsByUser = new Map<number, OwnedSystem[]>();
   for (const a of assignments) {
     const list = systemsByUser.get(a.userId) ?? [];
-    list.push({ id: a.systemId, lastSeenAt: a.lastSeenAt });
+    list.push({ ...a, id: a.systemId });
     systemsByUser.set(a.userId, list);
   }
+  const now = new Date();
 
   const allSystemIds = [...new Set(assignments.map((a) => a.systemId))];
   if (allSystemIds.length === 0) {
@@ -219,6 +266,7 @@ export async function listPeople(
       projects,
       prompts: sawPrompts ? promptTotal : null,
       last_active: lastActive,
+      scan: liveliest(owned, now),
     };
   });
 }
@@ -247,6 +295,10 @@ function emptyPerson(p: {
     projects: 0,
     prompts: null,
     last_active: null,
+    // No machine assigned, so there is nothing scanning on this person's
+    // behalf — reported as unknown rather than idle, which would imply an agent
+    // that is merely between scans.
+    scan: deriveScanActivity(EMPTY_SCAN),
   };
 }
 

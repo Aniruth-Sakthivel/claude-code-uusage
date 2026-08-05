@@ -82,6 +82,23 @@ export const systems = pgTable(
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
     totalEvents: bigint("total_events", { mode: "number" }).notNull().default(0),
 
+    /**
+     * What the agent is doing right now, as it reports it: idle | scanning |
+     * scanned | syncing | paused. `lastSeenAt` alone could only say "something
+     * checked in recently", which is not enough to answer the question an
+     * admin actually asks — is this machine's agent working?
+     *
+     * `agentStatusAt` is when the agent said so, not when we noticed: a
+     * "scanning" that stopped updating is how a hung agent shows up.
+     */
+    agentStatus: varchar("agent_status", { length: 16 }).notNull().default(""),
+    agentStatusAt: timestamp("agent_status_at", { withTimezone: true }),
+    agentStatusDetail: varchar("agent_status_detail", { length: 255 }).notNull().default(""),
+    /** The agent's own scan cadence — what the next-scan countdown counts down to. */
+    scanIntervalSeconds: integer("scan_interval_seconds"),
+    lastScanAt: timestamp("last_scan_at", { withTimezone: true }),
+    lastScanDurationMs: integer("last_scan_duration_ms"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("systems_created_by_idx").on(t.createdByUserId)],

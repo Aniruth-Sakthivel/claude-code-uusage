@@ -97,19 +97,38 @@ Invoke-Meterhouse -FleetArgs @("sync")
 
 if (-not $SkipSchedule) {
     $taskName = "Meterhouse Scan+Sync"
+
+    # `once` does scan + sync in a single process. The previous form chained
+    # them with "&&", which has to be wrapped in cmd /c inside a task action;
+    # the nested quoting that needs is a reliable way to register a task that
+    # never actually runs, leaving a PC silently not reporting.
     if ($exe) {
-        $inner = '"' + $exe + '" scan --quiet && "' + $exe + '" sync --quiet'
+        $execute = $exe
+        $arguments = "once --quiet"
     } else {
-        $pyExe = if ($py.Count -gt 1) { "py -3" } else { "python" }
-        $inner = "$pyExe -m meterhouse scan --quiet && $pyExe -m meterhouse sync --quiet"
+        $pyPath = (Get-Command $py[0]).Source
+        # pythonw/pyw run without a console, so the task does not flash a
+        # window in the user's face every 15 minutes.
+        $windowless = Join-Path (Split-Path $pyPath -Parent) $(if ($py[0] -eq "py") { "pyw.exe" } else { "pythonw.exe" })
+        $execute = if (Test-Path $windowless) { $windowless } else { $pyPath }
+        $prefix = if ($py.Count -gt 1) { ($py[1..($py.Length - 1)] -join " ") + " " } else { "" }
+        $arguments = "$prefix-m meterhouse once --quiet"
     }
-    # schtasks /TR does not go through cmd.exe, so "&&" must be wrapped in an
-    # explicit cmd /c call - otherwise it's passed as a literal argument to the
-    # first command and sync never runs.
-    $action = 'cmd /c "' + $inner.Replace('"', '\"') + '"'
-    schtasks /Delete /TN $taskName /F 2>$null | Out-Null
-    schtasks /Create /SC MINUTE /MO 15 /TN $taskName /TR $action /ST 00:00 /F | Out-Null
-    Write-Host "Scheduled task '$taskName' - scan + sync every 15 minutes."
+
+    try {
+        $action = New-ScheduledTaskAction -Execute $execute -Argument $arguments
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+            -RepetitionInterval (New-TimeSpan -Minutes 15) `
+            -RepetitionDuration (New-TimeSpan -Days 3650)
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+            -Settings $settings -Force -ErrorAction Stop | Out-Null
+        Write-Host "Scheduled task '$taskName' - scan + sync every 15 minutes."
+    } catch {
+        Write-Host "Could not register the scheduled task: $($_.Exception.Message)"
+        Write-Host "Usage already synced once; re-run this script or schedule 'meterhouse once' yourself."
+    }
 }
 
 Write-Host ""

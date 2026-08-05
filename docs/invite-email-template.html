@@ -1,0 +1,46 @@
+<!--
+  Meterhouse invite email — paste this into Supabase:
+      Authentication → Emails → Invite user → Message body
+
+  The values come from the invite metadata the API sends in
+  api/src/core/supabase-admin.ts (inviteAuthUser). Renaming those keys means
+  editing this file to match.
+
+    {{ .Data.default_email }}     the address the account was created for
+    {{ .Data.default_password }}  the starter password, already set on the account
+    {{ .ConfirmationURL }}        accept-invite link (used only to pick a new password)
+
+  The account is created pre-confirmed, so the password below works immediately —
+  the link is optional.
+-->
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5;color:#111827;max-width:520px">
+  <h2 style="margin:0 0 12px;font-size:20px">You have been invited to Meterhouse</h2>
+
+  <p style="margin:0 0 16px">
+    An administrator has created an account for you. You can sign in right away with
+    these details:
+  </p>
+
+  <table style="border-collapse:collapse;margin:0 0 20px;font-size:15px">
+    <tr>
+      <td style="padding:6px 16px 6px 0;color:#6b7280">Email</td>
+      <td style="padding:6px 0"><strong>{{ .Data.default_email }}</strong></td>
+    </tr>
+    <tr>
+      <td style="padding:6px 16px 6px 0;color:#6b7280">Password</td>
+      <td style="padding:6px 0"><strong>{{ .Data.default_password }}</strong></td>
+    </tr>
+  </table>
+
+  <p style="margin:0 0 20px">
+    <a href="{{ .ConfirmationURL }}"
+       style="display:inline-block;padding:10px 18px;background:#111827;color:#fff;border-radius:6px;text-decoration:none">
+      Accept the invitation
+    </a>
+  </p>
+
+  <p style="margin:0 0 8px;color:#6b7280;font-size:14px">
+    Use the button only if you would rather choose your own password now.
+    Either way, please change the password above after your first sign-in.
+  </p>
+</div>

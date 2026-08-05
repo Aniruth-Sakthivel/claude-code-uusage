@@ -24,14 +24,30 @@ import signal
 import time
 from datetime import date
 
+from .activity import ActivityWatcher
 from .config import AgentConfig
 from .health import HealthState
 from .identity import Identity, load_identity
+from .lockfile import SingleInstanceLock
 from .logging_setup import configure_logging, get_logger
 from .scanner import scan as run_scan
 from .store import Store, default_db_path
 
 log = get_logger("meterhouse.daemon")
+
+# How often the health file is refreshed. Deliberately independent of
+# `scan_interval_seconds`: the supervisor task and `meterhouse health` both use
+# the file's age to judge whether the agent is alive, and an operator raising
+# the scan interval from the dashboard must not make a perfectly healthy daemon
+# look dead.
+HEALTH_HEARTBEAT_SECONDS = 30
+
+# How often the transcript files are checked for activity while waiting out the
+# scan interval. Short enough that starting a Claude session shows up on the
+# dashboard within seconds; long enough that the stat sweep is irrelevant to
+# CPU. Never longer than the scan interval — the wait is capped by whichever
+# comes first.
+ACTIVITY_POLL_SECONDS = 5
 
 
 def _process_metrics() -> dict:
@@ -59,6 +75,7 @@ class Daemon:
         self._stop = asyncio.Event()
         self._paused = asyncio.Event()
         self._ws = None
+        self._activity = ActivityWatcher()
 
     async def _run_command(self, message: dict) -> None:
         """Handle a server-pushed command, e.g.
@@ -86,11 +103,13 @@ class Daemon:
         if action == "pause":
             self._paused.set()
             log.info("daemon paused by command")
+            await self._report_status_async("paused", "scheduled scans paused")
             return "acked", "scan loop paused"
 
         if action == "resume":
             self._paused.clear()
             log.info("daemon resumed by command")
+            await self._report_status_async("idle", "scheduled scans resumed")
             return "acked", "scan loop resumed"
 
         if action == "set_config":
@@ -144,6 +163,40 @@ class Daemon:
         except SyncError as exc:
             log.warning("command ack failed", extra={"command_id": command_id, "reason": str(exc)})
 
+    def _report_status(self, state: str, detail: str = "", **extra) -> None:
+        """Push a status line to the dashboard, best effort.
+
+        Runs on the event loop thread but is bounded by the HTTP timeout, and
+        every failure is swallowed: a dashboard that cannot be told about a
+        scan must never prevent the scan.
+        """
+        if not (self._ident.server_url and self._ident.api_key):
+            return
+        from .sync import SyncClient
+
+        try:
+            SyncClient(
+                self._ident.server_url,
+                self._ident.api_key,
+                timeout=self._cfg.http_timeout_seconds,
+            ).report_status(
+                state,
+                detail,
+                scan_interval_seconds=self._cfg.scan_interval_seconds,
+                **extra,
+            )
+        except Exception:  # noqa: BLE001 - status is diagnostics, never critical
+            log.debug("status report failed", extra={"state": state})
+
+    async def _report_status_async(self, state: str, detail: str = "", **extra) -> None:
+        # Local-only agents have nowhere to report to: return without so much as
+        # a thread-pool round trip, so the scan starts as promptly as it did
+        # before status reporting existed.
+        if not (self._ident.server_url and self._ident.api_key):
+            return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self._report_status(state, detail, **extra))
+
     async def _scan_once(self, trigger: str) -> dict | None:
         # `pause`/`resume` commands only affect the schedule; a `scan_now`
         # command (trigger="command") still runs on request even while paused.
@@ -157,6 +210,7 @@ class Daemon:
 
         async with self._scan_lock:
             start = time.monotonic()
+            await self._report_status_async("scanning", f"trigger={trigger}")
             try:
                 loop = asyncio.get_running_loop()
                 summary = await loop.run_in_executor(
@@ -184,7 +238,22 @@ class Daemon:
                         }
                     )
 
+                scanned_at = self._health.last_scan_at
+                await self._report_status_async(
+                    "scanned",
+                    f"{summary.get('events_inserted', 0)} new events",
+                    last_scan_at=scanned_at,
+                    last_scan_duration_ms=round(duration_ms, 1),
+                )
+
                 await self._sync_once()
+
+                await self._report_status_async(
+                    "idle",
+                    f"next scan in {self._cfg.scan_interval_seconds}s",
+                    last_scan_at=scanned_at,
+                    last_scan_duration_ms=round(duration_ms, 1),
+                )
                 return summary
             except Exception as exc:  # noqa: BLE001 - never let a bad scan kill the daemon
                 duration_ms = (time.monotonic() - start) * 1000
@@ -193,6 +262,7 @@ class Daemon:
                 log.exception("scan failed", extra={"trigger": trigger})
                 if self._ws is not None:
                     self._ws.send({"type": "alert", "level": "error", "message": reason})
+                await self._report_status_async("error", reason)
                 return None
             finally:
                 # Best-effort: a health file the daemon can't write (e.g. disk
@@ -210,6 +280,7 @@ class Daemon:
         client = SyncClient(
             self._ident.server_url, self._ident.api_key, timeout=self._cfg.http_timeout_seconds
         )
+        await self._report_status_async("syncing", "pushing usage to the dashboard")
         store = Store(self._db_path)
         try:
             sync_store(store, client, verbose=False,
@@ -261,14 +332,79 @@ class Daemon:
             log.warning("account report skipped", extra={"reason": f"{type(exc).__name__}: {exc}"})
 
     async def _scan_loop(self) -> None:
+        """Scan on the interval, or as soon as someone starts using Claude.
+
+        The interval is the floor, not the cadence. Waiting it out means a
+        session that starts a second after a tick is invisible on the dashboard
+        for a full interval, which is exactly when someone looks and concludes
+        the agent is not running. The wait is therefore broken into short polls
+        of the transcript files, and any change scans immediately.
+        """
         while not self._stop.is_set():
             await self._scan_once(trigger="schedule")
+            self._activity.mark_scanned()
+            if not await self._wait_for_next_scan():
+                return
+
+    async def _wait_for_next_scan(self) -> bool:
+        """Sleep until the next scan is due, or until Claude activity appears.
+
+        Returns False when the daemon is stopping.
+        """
+        deadline = time.monotonic() + self._cfg.scan_interval_seconds
+        loop = asyncio.get_running_loop()
+
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+
             try:
                 await asyncio.wait_for(
-                    self._stop.wait(), timeout=self._cfg.scan_interval_seconds
+                    self._stop.wait(),
+                    timeout=min(ACTIVITY_POLL_SECONDS, remaining),
                 )
+                return False  # stop requested
             except asyncio.TimeoutError:
                 pass
+
+            # Paused means the operator asked for no scheduled scans; activity
+            # must not quietly override that.
+            if self._paused.is_set():
+                continue
+
+            try:
+                busy = await loop.run_in_executor(None, self._activity.changed)
+            except Exception:  # noqa: BLE001 - a stat sweep must never stop the loop
+                log.exception("activity check failed")
+                continue
+
+            if busy:
+                log.info("claude activity detected, scanning early")
+                await self._scan_once(trigger="activity")
+                self._activity.mark_scanned()
+                deadline = time.monotonic() + self._cfg.scan_interval_seconds
+
+    async def _health_loop(self) -> None:
+        """Keep the health file fresh between scans.
+
+        Without this the file is only touched when a scan completes, so at a
+        10-minute scan interval the agent looks unresponsive for nine of every
+        ten minutes — to `meterhouse health`, and to the supervisor task that
+        decides whether to relaunch it.
+        """
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=HEALTH_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                pass
+            if self._stop.is_set():
+                return
+            self._health.touch()
+            try:
+                self._health.save()
+            except Exception:  # noqa: BLE001 - diagnostics must never stop the daemon
+                log.exception("failed to persist health state")
 
     async def _start_ws(self) -> None:
         if not (self._cfg.ws_enabled and self._cfg.ws_url and self._ident.api_key):
@@ -295,6 +431,10 @@ class Daemon:
         )
         await self._start_ws()
         self._health.save()
+        # Publish the cadence immediately, so the dashboard can show this
+        # machine's interval and next-scan countdown from the moment it starts
+        # rather than only after the first scan completes.
+        await self._report_status_async("idle", "agent started")
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -303,20 +443,38 @@ class Daemon:
             except NotImplementedError:
                 pass  # Windows doesn't support add_signal_handler for SIGTERM
 
+        health_task = asyncio.create_task(self._health_loop())
         try:
             await self._scan_loop()
         finally:
+            self._stop.set()
+            health_task.cancel()
             if self._ws is not None:
                 await self._ws.stop()
             log.info("daemon stopped")
 
 
 def run_daemon(display_name: str | None = None, db_path=None) -> None:
-    ident = load_identity(display_name=display_name)
-    cfg = AgentConfig.load().validated()
-    configure_logging(level=cfg.log_level, json_output=cfg.log_json)
-    daemon = Daemon(cfg, ident, db_path=db_path)
+    """Run the daemon, unless one is already running on this machine.
+
+    The supervising scheduled task fires every few minutes precisely so a dead
+    daemon comes back quickly; the lock is what makes that safe. Exiting quietly
+    (not with an error) keeps Task Scheduler's history clean — a relaunch that
+    finds a healthy daemon is the expected case, not a failure.
+    """
+    lock = SingleInstanceLock()
+    if not lock.acquire():
+        log.info("another meterhouse daemon is already running; exiting")
+        return
+
     try:
-        asyncio.run(daemon.run())
-    except KeyboardInterrupt:
-        pass
+        ident = load_identity(display_name=display_name)
+        cfg = AgentConfig.load().validated()
+        configure_logging(level=cfg.log_level, json_output=cfg.log_json)
+        daemon = Daemon(cfg, ident, db_path=db_path)
+        try:
+            asyncio.run(daemon.run())
+        except KeyboardInterrupt:
+            pass
+    finally:
+        lock.release()

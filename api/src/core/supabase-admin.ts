@@ -79,23 +79,52 @@ export async function createAuthUser(
 }
 
 /**
- * Invite a user by email — they set their own password via the emailed link.
- * Preferred over `createAuthUser`, which requires sharing a password
- * out-of-band.
+ * Invite a user by email and give the account usable login details right away.
+ *
+ * The invite metadata carries `default_email` / `default_password`, which the
+ * Supabase invite template renders next to the acceptance link (see
+ * docs/DEPLOY.md) — so the email says both "click here" and "or sign in with
+ * these details". The password is applied and the address pre-confirmed after
+ * the invite is sent, because a plain invite leaves the account unconfirmed and
+ * password sign-in would be rejected until the link was clicked.
+ *
+ * The metadata is only ever the shared starter password, never anything the
+ * user has since chosen: `updateAuthUserPassword` does not touch it.
  */
 export async function inviteAuthUser(
   email: string,
   fullName = "",
   redirectTo?: string,
+  defaultPassword: string = config.INVITE_DEFAULT_PASSWORD,
 ): Promise<string> {
-  const { data, error } = await getAdminClient().auth.admin.inviteUserByEmail(email, {
-    data: { full_name: fullName },
-    redirectTo,
+  const userId = await retryWithBackoff(
+    async () => {
+      const { data, error } = await getAdminClient().auth.admin.inviteUserByEmail(email, {
+        data: {
+          full_name: fullName,
+          default_email: email,
+          default_password: defaultPassword,
+        },
+        redirectTo,
+      });
+      if (!error && data.user) return data.user.id;
+      const message = error?.message;
+      if (isTransientAuthError(message)) {
+        throw new ServiceUnavailableError(`Could not invite user: ${message ?? "unknown error"}`);
+      }
+      throw badRequest(`Could not invite user: ${message ?? "unknown error"}`);
+    },
+    { retries: 3, baseDelayMs: 1000, shouldRetry: (err) => err instanceof ServiceUnavailableError },
+  );
+
+  const { error } = await getAdminClient().auth.admin.updateUserById(userId, {
+    password: defaultPassword,
+    email_confirm: true,
   });
-  if (error || !data.user) {
-    throw badRequest(`Could not invite user: ${error?.message ?? "unknown error"}`);
+  if (error) {
+    throw badRequest(`Could not set the default password for ${email}: ${error.message}`);
   }
-  return data.user.id;
+  return userId;
 }
 
 /** Find an existing Auth user id by email, or null. */

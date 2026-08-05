@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 
 from . import __version__
 from .account import collect_account_report
@@ -41,10 +41,36 @@ def _row_cost(r) -> float:
     return calc_cost(r["model"], r["inp"] or 0, r["out"] or 0, r["cr"] or 0, r["cc"] or 0)
 
 
+def _status(ident, state, detail="", **extra):
+    """Best-effort status ping for the dashboard's live agent view.
+
+    Central mode only, and every failure is swallowed — the scan or sync this
+    annotates has to work the same on a machine that cannot reach the server.
+    """
+    if not (ident.server_url and ident.api_key):
+        return
+    from .sync import SyncClient
+
+    try:
+        SyncClient(ident.server_url, ident.api_key).report_status(state, detail, **extra)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def cmd_scan(args):
     ident = load_identity(display_name=args.display_name)
+    started = datetime.now(timezone.utc)
+    _status(ident, "scanning", "one-shot scan")
     summary = run_scan(system_id=ident.system_id, db_path=args.db,
                        verbose=not args.quiet)
+    duration_ms = (datetime.now(timezone.utc) - started).total_seconds() * 1000
+    _status(
+        ident,
+        "scanned",
+        f"{summary.get('events_inserted', 0)} new events",
+        last_scan_at=started.isoformat(),
+        last_scan_duration_ms=round(duration_ms, 1),
+    )
     if args.quiet:
         print(summary)
 
@@ -308,6 +334,7 @@ def cmd_sync(args):
     cfg = AgentConfig.load()
     try:
         client = SyncClient(ident.server_url, ident.api_key)
+        _status(ident, "syncing", "pushing usage to the dashboard")
         totals = sync_store(store, client, verbose=not args.quiet,
                             send_titles=cfg.session_titles_enabled)
         print(f"Sync complete: inserted={totals['inserted']} "
@@ -328,10 +355,25 @@ def cmd_sync(args):
             db_path=args.db,
             verbose=not args.quiet,
         )
+        _status(ident, "idle", f"synced {totals['inserted']} events")
     except SyncError as e:
         print(f"Sync failed (offline?) - will retry next run: {e}")
+        _status(ident, "error", str(e))
     finally:
         store.close()
+
+
+def cmd_once(args):
+    """One full cycle: scan, then sync (which also collects queued commands).
+
+    This is what the scheduled fallback task runs. It exists as a single
+    subcommand rather than `scan && sync` because the chaining form has to be
+    wrapped in `cmd /c` inside a scheduled task's action string, and the nested
+    quoting there is a reliable source of tasks that register but never run —
+    which left machines silently not reporting.
+    """
+    cmd_scan(args)
+    cmd_sync(args)
 
 
 def cmd_daemon(args):
@@ -450,6 +492,14 @@ def build_parser() -> argparse.ArgumentParser:
     sy = sub.add_parser("sync", help="push unsynced usage to the central server")
     sy.add_argument("--quiet", action="store_true")
     sy.set_defaults(func=cmd_sync)
+
+    on = sub.add_parser(
+        "once",
+        help="one cycle: scan + sync + run any commands queued by the dashboard",
+    )
+    on.add_argument("--display-name", default=None)
+    on.add_argument("--quiet", action="store_true")
+    on.set_defaults(func=cmd_once)
 
     ac = sub.add_parser(
         "account",

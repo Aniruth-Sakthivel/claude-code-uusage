@@ -159,38 +159,64 @@ responses, or source code — only token counts and metadata.
 
 ---
 
-## 6. Automatic scanning (Windows Task Scheduler)
+## 6. Running in the background (Windows Task Scheduler)
 
-Run a scan every 15 minutes without thinking about it (one line):
+The "Connect PC" flow (§7) registers two tasks. Nothing has to stay open, and
+closing the terminal you installed from does not stop anything:
+
+| Task | What it does |
+| --- | --- |
+| **Meterhouse Agent** | The daemon: scans on its interval, scans immediately when you start using Claude, holds the real-time connection. Starts at logon and is re-checked every 5 minutes, so a daemon that was killed comes back on its own. |
+| **Meterhouse Scan+Sync** | `meterhouse once` every 15 minutes. The fallback for machines where the daemon cannot stay running — usage keeps arriving, and commands queued from the dashboard still get collected. |
+
+Re-launching the daemon while one is already running is safe: it takes a
+single-instance lock (`~/.claude/meterhouse/daemon.lock`) and a duplicate exits
+immediately.
+
+### Scanning starts when you do
+
+The scan interval is a floor, not a fixed cadence. While waiting it out the
+daemon checks `~/.claude/projects` every few seconds, and the moment a
+transcript is written — that is, the moment you start working in Claude Code —
+it scans. Starting a session just after a tick therefore shows up on the
+dashboard in seconds rather than a full interval later.
+
+The daemon also reports each step to the dashboard as it happens (`scanning` →
+`scanned` → `syncing` → `idle`), which is what the Systems page shows as a live
+badge and next-scan countdown. `meterhouse health` reports the same state
+locally; its `updated_at` is refreshed every 30 seconds regardless of the scan
+interval, so a fresh timestamp always means a live process.
+
+To set one up by hand, schedule `meterhouse once` — a single process that
+scans, syncs, and runs any queued dashboard commands:
 
 ```powershell
-schtasks /Create /SC MINUTE /MO 15 /TN "Meterhouse Scan" /TR "python -m meterhouse scan --quiet" /ST 00:00
+$py  = (Get-Command python).Source
+$pyw = Join-Path (Split-Path $py) 'pythonw.exe'   # no console window
+$exe = if (Test-Path $pyw) { $pyw } else { $py }
+$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse once --quiet'
+$trg = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
+Register-ScheduledTask -TaskName 'Meterhouse Scan+Sync' -Action $act -Trigger $trg -Force
 ```
 
-If you installed via the "Connect PC" flow (§7) or `deploy/install.ps1`, the
-task is instead named **"Meterhouse Scan+Sync"** and also pushes data to the
-central server every 15 minutes.
+> Do not chain `scan && sync` in a task action. `schtasks /TR` does not go
+> through `cmd.exe`, and wrapping it in `cmd /c "…"` needs nested quoting that
+> frequently registers a task which never actually runs — a PC that silently
+> stops reporting. `once` exists so there is nothing to chain.
 
 ### Stop the agent from scanning
 
-Remove whichever scheduled task applies to how you installed:
-
 ```powershell
-schtasks /Delete /TN "Meterhouse Scan" /F         # local scan-only task
-schtasks /Delete /TN "Meterhouse Scan+Sync" /F    # Connect PC / install.ps1 task
+schtasks /Delete /TN "Meterhouse Agent" /F
+schtasks /Delete /TN "Meterhouse Scan+Sync" /F
 ```
 
-To pause it instead of deleting it (keeps run history, easy to re-enable):
+To pause instead (keeps run history, easy to re-enable):
 
 ```powershell
-schtasks /Change /TN "Meterhouse Scan+Sync" /DISABLE
-schtasks /Change /TN "Meterhouse Scan+Sync" /ENABLE   # resume later
+schtasks /Change /TN "Meterhouse Agent" /DISABLE
+schtasks /Change /TN "Meterhouse Agent" /ENABLE   # resume later
 ```
-
-> `schtasks /TR` does not go through `cmd.exe`, so a raw `scan && sync`
-> command line will not chain correctly — it's run via a small
-> `meterhouse-scan-sync.cmd` wrapper batch file instead. If you set the task
-> up by hand, point `/TR` at a `.cmd` wrapper rather than an inline `&&`.
 
 ---
 
@@ -255,6 +281,9 @@ python -m meterhouse today | week | stats
 python -m meterhouse identity   [--display-name NAME] [--set-display-name NAME]
 python -m meterhouse register   --server URL --api-key KEY [--display-name NAME]
 python -m meterhouse sync       [--quiet]
+python -m meterhouse once       [--quiet]   # scan + sync + run queued commands
+python -m meterhouse daemon     [--display-name NAME]
+python -m meterhouse health
 python -m meterhouse heartbeat
 python -m meterhouse account   [show | enable | disable]
 python -m meterhouse --version

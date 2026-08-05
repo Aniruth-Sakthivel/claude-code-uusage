@@ -92,13 +92,13 @@ export async function adminRoutes(app: FastifyInstance) {
     // core/request-origin.ts for why that difference matters here.
     const origin = requestOrigin(req);
 
-    const { view, invited } = await admin.createUser(
+    const { view, invited, defaultPassword } = await admin.createUser(
       currentUser(req),
       body,
       requestContext(req),
       resolveInviteRedirectTo(origin),
     );
-    return reply.code(201).send({ ...userOut(view), invited });
+    return reply.code(201).send({ ...userOut(view), invited, default_password: defaultPassword });
   });
 
   app.patch<{ Params: { id: string } }>(

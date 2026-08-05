@@ -2,9 +2,10 @@
  * Users & roles.
  *
  * Replaces the old unlabelled four-field form with a proper invite flow: enter
- * an email and role, and the person receives a Supabase invite to set their own
- * password. That removes the previous requirement to read a password aloud to
- * someone. A password can still be set directly for scripted setups.
+ * an email and role, and the person receives a Supabase invite carrying their
+ * default login details plus a link to set their own password. That removes the
+ * previous requirement to read a password aloud to someone. A password can
+ * still be set directly for scripted setups.
  *
  * Destructive actions now confirm first, and failures surface as toasts —
  * previously they failed silently.
@@ -16,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type {
+  CreatedUser,
   CreateUserPayload,
   Role,
   SystemRow,
@@ -77,13 +79,14 @@ export function AdminUsers() {
   });
 
   const create = useMutation({
-    mutationFn: (payload: CreateUserPayload) => api.post<User>("/admin/users", payload),
-    onSuccess: (_u, payload) => {
+    mutationFn: (payload: CreateUserPayload) => api.post<CreatedUser>("/admin/users", payload),
+    onSuccess: (created, payload) => {
       qc.invalidateQueries({ queryKey: qk.users });
       toast.push(
         payload.password
           ? `Account created for ${payload.email}.`
-          : `Invite sent to ${payload.email}.`,
+          : `Invite sent to ${payload.email}. They can sign in with ${payload.email} / ` +
+              `${created.default_password ?? "the default password"}.`,
       );
       setForm({ email: "", full_name: "", role: "developer", system_ids: [], password: "" });
       setUsePassword(false);
@@ -143,7 +146,10 @@ export function AdminUsers() {
       </div>
 
       <FormCard className="flex flex-col gap-4" onSubmit={submit}>
-        <CardHead title="Invite someone" hint="They set their own password by email." />
+        <CardHead
+          title="Invite someone"
+          hint="The email carries their login details and a link to set their own password."
+        />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Email" required>
