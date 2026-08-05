@@ -243,13 +243,14 @@ try {
   );
 
   // The URL that was wrong in production — assert it is now the configured one.
+  // The generated command must point at the origin the request came in on —
+  // that is the host the dashboard was just served from, so it is reachable by
+  // definition. A configured PUBLIC_URL is only a fallback, precisely because
+  // it can go stale and produce commands aimed at a host that no longer exists.
   const serverArg = connect.body?.manual_commands?.match(/--server '?([^\s']+)'?/)?.[1];
-  const expectServer = (process.env.EXPECT_SERVER ?? process.env.PUBLIC_URL ?? "").replace(
-    /\/$/,
-    "",
-  );
+  const expectServer = (process.env.EXPECT_SERVER ?? BASE).replace(/\/$/, "");
   check(
-    "register command points at the expected server URL",
+    "register command points at the request origin",
     !!serverArg && serverArg === expectServer,
     `got ${serverArg}, expected ${expectServer}`,
   );

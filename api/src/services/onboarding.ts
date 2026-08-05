@@ -58,10 +58,38 @@ export interface ConnectResult {
   expiresAt: Date;
 }
 
+/**
+ * Base URL to bake into enrollment commands and install scripts.
+ *
+ * The request origin wins over the configured `PUBLIC_URL`, because it is the
+ * host the dashboard was *just* served from — reachable by construction. A
+ * configured value can silently go stale (a renamed site, a leftover variable
+ * in the host's UI) and there is no feedback loop: the command is copied onto
+ * a PC, points at a host that no longer exists, and the agent fails forever
+ * with no error visible in the dashboard. That is exactly what happened when
+ * this deployment kept emitting `claude-code-usage.netlify.app` long after the
+ * rename, so the safer default is to trust the origin actually in use.
+ *
+ * `PUBLIC_URL` remains the fallback for contexts with no request (CLI, tests,
+ * scheduled jobs), and a mismatch is logged so misconfiguration stays visible
+ * rather than silently overridden.
+ */
 function publicBaseUrl(requestOrigin?: string): string {
   const configured = config.PUBLIC_URL?.replace(/\/$/, "");
+  const origin = requestOrigin?.replace(/\/$/, "");
+
+  if (origin) {
+    if (configured && configured !== origin) {
+      console.warn(
+        `[onboarding] PUBLIC_URL (${configured}) does not match the request ` +
+          `origin (${origin}); using the request origin. Update PUBLIC_URL in ` +
+          `the deployment environment to silence this.`,
+      );
+    }
+    return origin;
+  }
+
   if (configured) return configured;
-  if (requestOrigin) return requestOrigin.replace(/\/$/, "");
   return `http://127.0.0.1:${config.PORT}`;
 }
 
