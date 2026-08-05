@@ -131,7 +131,7 @@ export function Connect() {
                     {s.hostname && <div className="text-xs text-muted">{s.hostname}</div>}
                   </Td>
                   <Td>
-                    <StatusPill status={s.status} neverSynced={s.never_synced} />
+                    <StatusPill status={s.status} neverSynced={s.never_synced} health={s.health} reason={s.reason} />
                   </Td>
                   <Td className="text-muted">
                     {s.never_synced ? "Waiting for first sync" : fmtRelative(s.last_sync_at)}

@@ -164,7 +164,7 @@ export function Systems() {
                     <div className="text-xs text-muted">{s.hostname || "—"}</div>
                   </Td>
                   <Td>
-                    <StatusPill status={s.status} neverSynced={s.never_synced} />
+                    <StatusPill status={s.status} neverSynced={s.never_synced} health={s.health} reason={s.reason} />
                   </Td>
                   <Td className="text-ink-2">{s.owner || "—"}</Td>
                   <Td className="text-ink-2">{s.environment || "—"}</Td>

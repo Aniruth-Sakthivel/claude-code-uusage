@@ -180,28 +180,51 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 // ── status ────────────────────────────────────────────────────────────────────
+/**
+ * Agent liveness.
+ *
+ * "Offline" was doing too much work: it read the same for a laptop asleep for
+ * ten minutes, an agent that died when its terminal closed, and a PC nobody has
+ * used in a month. The graded states answer the question people actually have
+ * after closing a window — is it still sending? — and `reason` says why in
+ * plain language rather than leaving the dot to be interpreted.
+ */
+const HEALTH_PRESENTATION: Record<
+  string,
+  { label: string; tone: string; pulse?: boolean }
+> = {
+  healthy: { label: "Working", tone: "text-good", pulse: true },
+  late: { label: "Late", tone: "text-warn" },
+  stalled: { label: "Stuck", tone: "text-warn" },
+  dead: { label: "Not running", tone: "text-critical" },
+  never: { label: "Never synced", tone: "text-warn" },
+};
+
 export function StatusPill({
   status,
   neverSynced,
+  health,
+  reason,
 }: {
   status: string;
   neverSynced?: boolean;
+  health?: string;
+  reason?: string;
 }) {
-  if (neverSynced) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-warn">
-        <span className="h-2 w-2 rounded-full bg-current" />
-        Never synced
-      </span>
-    );
-  }
-  const online = status === "online";
+  // Prefer the graded value; fall back to the binary flag so any caller that
+  // has not been updated still renders something correct.
+  const key = health ?? (neverSynced ? "never" : status === "online" ? "healthy" : "dead");
+  const p = HEALTH_PRESENTATION[key] ?? HEALTH_PRESENTATION.dead!;
+
   return (
     <span
-      className={`inline-flex items-center gap-1.5 text-sm font-semibold ${online ? "text-good" : "text-muted"}`}
+      className={`inline-flex items-center gap-1.5 text-sm font-semibold ${p.tone}`}
+      title={reason}
     >
-      <span className="h-2 w-2 rounded-full bg-current" />
-      {online ? "Online" : "Offline"}
+      <span
+        className={`h-2 w-2 rounded-full bg-current ${p.pulse ? "animate-pulse motion-reduce:animate-none" : ""}`}
+      />
+      {p.label}
     </span>
   );
 }

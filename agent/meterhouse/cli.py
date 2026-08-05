@@ -244,6 +244,59 @@ def _report_account(client, cfg, verbose=True):
             print(f"Account report skipped: {type(e).__name__}: {e}")
 
 
+def _run_pending_commands(client, commands, system_id, db_path=None, verbose=True):
+    """Execute commands the server handed back, then ack each one.
+
+    Without this, the dashboard's agent controls only worked for machines
+    running `meterhouse daemon`. The recommended background setup is a
+    scheduled `scan` + `sync`, and under it a queued command was marked
+    delivered and then sat pending forever — the button appeared to work and
+    nothing happened.
+
+    `pause`/`resume` govern a running scan loop, so there is nothing to pause
+    here; they are acked as skipped rather than silently swallowed, which keeps
+    the dashboard honest about what actually took effect.
+    """
+    from .config import AgentConfig
+    from .scanner import scan as run_scan
+    from .sync import SyncError
+
+    for command in commands or []:
+        command_id = command.get("id")
+        action = command.get("action")
+        payload = command.get("payload") or {}
+        status, detail = "acked", ""
+
+        try:
+            if action == "scan_now":
+                summary = run_scan(system_id=system_id, db_path=db_path, verbose=False)
+                detail = f"scanned {summary.get('events_inserted', 0)} new events"
+            elif action == "set_config":
+                cfg = AgentConfig.load()
+                applied = []
+                for field, value in payload.items():
+                    if hasattr(cfg, field):
+                        setattr(cfg, field, value)
+                        applied.append(field)
+                cfg.save()
+                detail = f"applied: {', '.join(applied)}" if applied else "no recognized fields"
+            elif action in ("pause", "resume"):
+                status, detail = "skipped", f"{action} needs the daemon; this is a one-shot sync"
+            else:
+                status, detail = "failed", f"unknown action '{action}'"
+        except Exception as exc:  # noqa: BLE001 - report it, never fail the sync
+            status, detail = "failed", f"{type(exc).__name__}: {exc}"
+
+        if verbose:
+            print(f"Command {action}: {status} ({detail})")
+        if command_id is not None:
+            try:
+                client.ack_command(command_id, status, detail)
+            except SyncError as exc:
+                if verbose:
+                    print(f"Could not ack command {command_id}: {exc}")
+
+
 def cmd_sync(args):
     from .sync import SyncClient, SyncError, sync_store
     ident = load_identity()
@@ -260,6 +313,21 @@ def cmd_sync(args):
         print(f"Sync complete: inserted={totals['inserted']} "
               f"duplicates={totals['duplicates']} (sent={totals['received']}).")
         _report_account(client, cfg, verbose=not args.quiet)
+
+        # Always check in, even when there was nothing to push. Two reasons:
+        # `sync_store` sends no request at all on an idle machine, so without
+        # this the dashboard sees no contact and reports the agent as dead when
+        # it is simply quiet; and this is where queued commands are collected,
+        # which is what makes the dashboard's controls work for machines that
+        # run the scheduled scan+sync rather than the daemon.
+        resp = client.heartbeat()
+        _run_pending_commands(
+            client,
+            resp.get("commands", []),
+            system_id=ident.system_id,
+            db_path=args.db,
+            verbose=not args.quiet,
+        )
     except SyncError as e:
         print(f"Sync failed (offline?) - will retry next run: {e}")
     finally:

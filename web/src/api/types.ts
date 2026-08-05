@@ -38,12 +38,23 @@ export interface SystemRow {
   last_sync_at: string | null;
   created_at: string;
   status: "online" | "offline";
+  /**
+   * Graded liveness. `status` alone cannot separate a sleeping laptop from an
+   * agent that died when its terminal closed — this can.
+   */
+  health: AgentHealth;
+  /** Milliseconds of silence; null when the agent has never checked in. */
+  silent_for_ms: number | null;
+  /** Plain-language explanation, safe to render as-is. */
+  reason: string;
   total_tokens: number;
   sessions: number;
   projects: number;
   /** True until the agent's first successful sync — drives the setup hint. */
   never_synced: boolean;
 }
+
+export type AgentHealth = "never" | "healthy" | "late" | "stalled" | "dead";
 
 export interface SystemCreated {
   system: SystemRow;

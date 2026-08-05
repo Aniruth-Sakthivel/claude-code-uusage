@@ -105,3 +105,11 @@ export function clearStashedConnect(): void {
   sessionStorage.removeItem(PENDING_KEY);
   sessionStorage.removeItem(PENDING_NAME);
 }
+
+/**
+ * Foreground daemon. Dies with its terminal, so it is offered as a deliberate
+ * alternative to the scheduled task rather than as a way to keep a PC
+ * reporting — and it is the only path that reports Claude account usage on
+ * agent 0.1.2 and older.
+ */
+export const DAEMON_COMMAND = "python -m meterhouse daemon";

@@ -2,6 +2,7 @@
  * Dashboard shaping — turns scoped repository reads into API payloads.
  */
 
+import { deriveAgentHealth } from "../core/agentHealth.js";
 import * as repo from "../repositories/dashboard.js";
 import { isEmptyScope, type Allowed } from "../repositories/scope.js";
 import {
@@ -139,6 +140,9 @@ export async function decorateSystems(allowed: Allowed) {
       last_sync_at: s.lastSyncAt?.toISOString() ?? null,
       created_at: s.createdAt.toISOString(),
       status: isOnline(s.lastSeenAt, now) ? ("online" as const) : ("offline" as const),
+      // Graded liveness alongside the binary flag: "offline" cannot tell a
+      // sleeping laptop from an agent that died when its terminal closed.
+      ...deriveAgentHealth(s.lastSeenAt, now),
       total_tokens: st?.totalTokens ?? 0,
       sessions: st?.sessions ?? 0,
       projects: st?.projects ?? 0,

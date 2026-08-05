@@ -17,6 +17,7 @@ import {
   userUpdate,
 } from "../schemas/index.js";
 import { resolveInviteRedirectTo } from "../core/public-url.js";
+import { requestOrigin } from "../core/request-origin.js";
 import * as admin from "../services/admin.js";
 import * as commands from "../services/commands.js";
 import { userOut } from "../services/auth.js";
@@ -87,7 +88,9 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/api/v1/admin/users", manageUsers, async (req, reply) => {
     const body = userCreate.parse(req.body ?? {});
-    const origin = req.headers.origin as string | undefined;
+    // The forwarded host, not the browser's Origin header — see
+    // core/request-origin.ts for why that difference matters here.
+    const origin = requestOrigin(req);
 
     const { view, invited } = await admin.createUser(
       currentUser(req),

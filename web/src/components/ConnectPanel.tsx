@@ -25,6 +25,7 @@ import type { ConnectResponse, SystemRow } from "../api/types";
 import {
   AGENT_INSTALL,
   BACKGROUND_TASK_COMMAND,
+  DAEMON_COMMAND,
   SCAN_COMMAND,
   SYNC_COMMAND,
   accountReportCommands,
@@ -210,16 +211,22 @@ export function ConnectPanel({
 
           <Step n={5} title="Keep it syncing by itself" code={BACKGROUND_TASK_COMMAND}>
             Scans and syncs every 15 minutes in the background — no window to leave open,
-            survives logout and reboot. (<code className="rounded bg-surface-2 px-1">
-              meterhouse daemon
-            </code>{" "}
-            is the foreground alternative and stops when you close the terminal.)
+            survives logout and reboot. The Systems page shows{" "}
+            <span className="font-semibold text-good">Working</span> while it is reporting,
+            and <span className="font-semibold text-warn">Stuck</span> if it stops.
           </Step>
 
           <Step n={6} title="Report Claude account usage" optional code={accountReportCommands()}>
             Adds this machine to the Claude accounts page with plan and rate-limit usage.{" "}
             <code className="rounded bg-surface-2 px-1">show</code> prints exactly what
             would be sent without sending it; the sync transmits it.
+          </Step>
+
+          <Step n={7} title="Run in the foreground instead" optional code={DAEMON_COMMAND}>
+            Scans every 60 seconds and prints as it goes — useful for watching a sync
+            happen, or for reporting Claude account usage on agent 0.1.2 and older, where
+            only the daemon sends it. It <span className="font-semibold">stops when you
+            close the terminal</span>, so use step 5 to keep a PC reporting.
           </Step>
         </ol>
 

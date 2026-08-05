@@ -219,7 +219,7 @@ export function Settings() {
                     </span>
                   </div>
                 </div>
-                <StatusPill status={s.status} neverSynced={s.never_synced} />
+                <StatusPill status={s.status} neverSynced={s.never_synced} health={s.health} reason={s.reason} />
               </div>
             ))}
           </div>

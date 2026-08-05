@@ -288,7 +288,7 @@ export function Overview() {
                     </div>
                   </Td>
                   <Td>
-                    <StatusPill status={sys.status} neverSynced={sys.never_synced} />
+                    <StatusPill status={sys.status} neverSynced={sys.never_synced} health={sys.health} reason={sys.reason} />
                   </Td>
                   <Td className="tnum text-ink-2">{fmtRelative(sys.last_seen_at)}</Td>
                   <Td align="right" className="tnum font-semibold text-ink">
