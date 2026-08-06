@@ -1,6 +1,7 @@
 # Module 9 — Administration
 
-**Phase 6** · ~20–26 EW
+**Phase 6** · ~28–35 EW (SSO and SCIM are built in-house — see
+[adr/0011](../adr/0011-build-sso-in-house.md))
 
 ## 1. Objectives
 
@@ -147,4 +148,10 @@ nightly, never on demand.
 7. Retention policies with preview and purge
 8. Security policy: MFA enforcement, session timeout
 9. Audit export with checksum
-10. SSO/SAML and SCIM configuration
+10. OIDC SSO configuration UI
+11. SCIM provisioning: token issuance, sync status, last-provisioned view
+12. SAML IdP configuration UI: entity id, SSO URL, certificate upload,
+    attribute mapping, metadata download, test-connection
+
+Items 10–12 are configuration surfaces over the in-house implementations in
+Module 1 — see [adr/0011](../adr/0011-build-sso-in-house.md).

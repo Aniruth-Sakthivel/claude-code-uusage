@@ -145,10 +145,11 @@ Written down so they cannot be smuggled in mid-phase:
 1. A single organization. Multi-org is a schema-compatible future change, not a
    v1 feature.
 2. One primary region. Data residency is not a requirement yet.
-3. Supabase Auth remains the identity provider — it supplies MFA, magic link,
-   OAuth and SAML, which is four requirements met by configuration rather than
-   code. Verify SAML/SCIM pricing before committing to FR-1 at the enterprise
-   tier.
+3. Supabase Auth remains the identity provider for password, magic link, OAuth
+   and MFA — all on the free tier, so three requirements are met by
+   configuration rather than code. **SAML and SCIM are built in-house**, because
+   there is no budget for a paid tier or an identity broker
+   ([adr/0011](adr/0011-build-sso-in-house.md)).
 4. English-only interface at launch.
 5. Teams are under 500 people per workspace, which keeps presence and mention
    fan-out uncomplicated.
@@ -160,4 +161,5 @@ Written down so they cannot be smuggled in mid-phase:
 | "Jira parity" is not a specification | The gap list has 30 items and no bottom | Every phase ships a written, versioned cut list with explicit *not in v1* entries |
 | Custom fields make every performance target conditional | Unbounded JSONB sort/filter table-scans | Cap filterable fields; index them separately; return 400 rather than a slow 200 |
 | Realtime plus optimistic UI is the hardest correctness problem here | "My change disappeared" is unreproducible in a bug report | Version-based reconciliation, deterministic out-of-order tests |
-| Gantt is a product requirement with an engineering cliff behind it | Genuinely 4–8 weeks; every estimate underestimates it | Timebox to 3 weeks, price commercial components before Phase 2 |
+| Gantt is a product requirement with an engineering cliff behind it | Genuinely 4–8 weeks, and there is **no licence budget**, so no purchase fallback exists | Budgeted at 5–6 EW and staged so Stage 1 ships independently ([adr/0012](adr/0012-build-gantt-in-house.md)) |
+| SSO and SCIM are procurement gates, and must be built rather than configured | No budget for a paid auth tier or an identity broker | OIDC first (~1–2 EW, covers most IdPs), then SCIM, then SAML last ([adr/0011](adr/0011-build-sso-in-house.md)) |

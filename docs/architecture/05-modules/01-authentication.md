@@ -1,16 +1,33 @@
 # Module 1 — Authentication and identity
 
-**Phase 0** · ~4 EW
+**Phase 0** · ~4 EW · plus **~10–12 EW of SSO/SCIM in Phase 6**
 
 ## 1. Objectives
 
 Establish who someone is, and turn that into a `RequestContext` the data layer
 can trust. Everything else in the system depends on this being right.
 
-The key decision: **Supabase Auth stays.** It already supplies MFA (TOTP), magic
-link, OAuth and SAML SSO — four requirements met by configuration rather than
-code. Building any of them ourselves would be a month of work and a permanent
-security liability.
+**Supabase Auth stays, on the free tier**, for password, magic link, OAuth and
+MFA (TOTP). Those are three requirements met by configuration rather than code,
+and building them ourselves would be a month of work and a permanent security
+liability.
+
+**SAML SSO and SCIM provisioning are built in-house**, because there is no
+budget for a paid auth tier or an identity broker. That is a deliberate cost
+decision with real consequences — see
+[adr/0011](../adr/0011-build-sso-in-house.md) — and it moves a
+security-critical protocol implementation into our codebase.
+
+Sequencing within Phase 6, cheapest useful thing first:
+
+| Order | Item | EW | Why here |
+|---|---|---|---|
+| 1 | **OIDC SSO** | 1–2 | Covers Okta, Azure AD, Google and most modern IdPs at a fraction of SAML's cost and risk |
+| 2 | **SCIM 2.0** | 4–5 | Provisioning is often the more painful admin gap, and is independent of the sign-in protocol |
+| 3 | **SAML 2.0** | 4–5 | Last: highest risk, and frequently satisfiable by OIDC in practice |
+
+If a deal closes on OIDC alone, SAML defers without blocking revenue. **Do not
+build SAML speculatively.**
 
 ## 2. Functional requirements
 
@@ -129,9 +146,11 @@ JWKS is cached in-process for 10 minutes. Neither scales with user count.
 
 | Risk | Mitigation |
 |---|---|
-| Supabase Auth pricing for SAML/SCIM at the enterprise tier | Verify cost **before** committing to FR-1 at that tier |
+| **We now own a security-critical SAML implementation.** SAML has a long history of severe vulnerabilities — signature wrapping, XML canonicalization bugs, `NameID` comment truncation | Signature and XML parsing path reviewed line by line, not skimmed. Mandatory assertion-replay cache. A dependency advisory on the SAML library is a **page-immediately** alert. Named target in the pre-launch penetration test |
+| SCIM provider quirks slip the estimate | Azure AD and Okta disagree on `PATCH` path expressions and on how deactivation is signalled. Budget per-provider time explicitly; this is where the estimate most often slips |
+| Building SAML before it is needed | OIDC first. SAML is built only when a deal actually requires it |
 | Supabase outage blocks all sign-in | Existing sessions keep working — JWT verification is local against cached JWKS. Only new sign-ins fail |
-| Provider lock-in | Auth is behind one adapter interface; principal resolution is ours |
+| Provider lock-in | Auth is behind one adapter interface; principal resolution is ours. If budget ever appears, a broker replaces SAML/SCIM without touching the rest |
 | Session mirror drifts from Supabase | Reconciled on each request; the mirror is display-only, never authoritative |
 
 ## 13. Implementation order
@@ -142,4 +161,14 @@ JWKS is cached in-process for 10 minutes. Neither scales with user count.
 4. Sessions and device management
 5. PATs
 6. MFA enforcement policy per workspace
-7. SSO/SAML configuration (deferred to Phase 6)
+
+Deferred to Phase 6, in this order:
+
+7. OIDC SSO (~1–2 EW)
+8. SCIM 2.0 server: Users, Groups, filters, `PATCH` semantics, deprovisioning
+   that closes sessions and sockets (~4–5 EW)
+9. SAML 2.0 SP: SP- and IdP-initiated, assertion validation, replay cache,
+   per-workspace IdP config (~4–5 EW) — **only when a deal requires it**
+
+Test matrix for 7–9 uses the no-cost developer tiers of Okta, Azure AD and
+Google Workspace, plus SimpleSAMLphp locally in CI.

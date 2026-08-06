@@ -120,6 +120,9 @@ Details in [02-system.md](02-system.md) and [24-deployment.md](24-deployment.md)
 | Decision | Choice | Document |
 |---|---|---|
 | Tenancy enforcement | Repository-layer guard, **not** Postgres RLS | [03-tenancy.md](03-tenancy.md) |
+| Paid components | **None.** No licences, no paid service tiers | [adr/README.md](adr/README.md) |
+| SAML SSO + SCIM | Built in-house, OIDC first | [adr/0011](adr/0011-build-sso-in-house.md) |
+| Gantt | Built in-house, staged scope | [adr/0012](adr/0012-build-gantt-in-house.md) |
 | Hosting | Containers, **not** serverless | [24-deployment.md](24-deployment.md) |
 | Work item modelling | One `issues` table with a `type` discriminator | [10-database.md](10-database.md) |
 | Board ordering | LexoRank strings, **not** integer positions | [10-database.md](10-database.md) |
@@ -149,15 +152,20 @@ the criteria that would reverse it.
 6. **Honest numbers.** A figure whose freshness cannot be established is labelled
    stale, not displayed as current. (This principle was earned — see the
    rate-limit meter that displayed a superseded reading for 14 hours.)
+7. **No paid components.** There is no budget for licences or paid service
+   tiers. Prefer open-source libraries we can host and audit; where a build is
+   the only option, stage the scope so the first stage is independently useful.
+   Where buying would have been the better engineering call, the ADR says so —
+   which is what keeps the decision cheap to revisit.
 
 ## 7. Scale honestly
 
 | | |
 |---|---|
-| Total build | **165–205 engineer-weeks** |
-| 4 engineers, ~70% parallelism | **11–14 calendar months** to a credible alternative |
+| Total build | **175–220 engineer-weeks** |
+| 4 engineers, ~70% parallelism (2.8 EW/week) | **14–18 calendar months** to a credible alternative |
 | Enterprise-buyer ready | +2–3 months |
-| Defensible internal launch | Phase 0 + 1 + half of 2 ≈ **60–70 EW ≈ 4–5 months** |
+| Defensible internal launch | Phase 0 + 1 + half of 2 ≈ **65–80 EW ≈ 5–7 months** |
 
 Anyone quoting six months for the whole thing is quoting Phase 0 + 1 and calling
 it done. Full breakdown in [26-roadmap.md](26-roadmap.md).

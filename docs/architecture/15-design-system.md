@@ -70,19 +70,33 @@ In this order — each is a dependency of the features that follow.
 | `RichTextEditor` | TipTap | Mentions, slash commands, paste-image-to-upload, markdown shortcuts. Replaces `MarkdownEditor.tsx` |
 | `DataGrid` | TanStack Table + react-virtual | Column resize/reorder/pin, grouping, inline edit, row selection. **The single most expensive component here** |
 | `KanbanBoard` | dnd-kit + react-virtual | Virtualized columns, WIP limits, swimlanes, collapse |
-| `GanttChart` | custom | CSS-grid timescale, absolutely-positioned bars, dependency arrows in one SVG overlay, virtualized rows |
+| `GanttChart` | custom, in-house | CSS-grid timescale, absolutely-positioned bars, dependency arrows in **one** SVG overlay, virtualized rows. Staged — see below |
 | `Timeline` / `Calendar` | custom + date-fns | |
 | `FileDropzone` | — | Presigned direct-to-R2, progress, resumable |
 
 ### On Gantt specifically
 
-Build it, but **timebox to three weeks**. A dependency-aware, virtualized,
-drag-resizable Gantt is genuinely 4–8 weeks and every estimate underestimates it.
+**Built in-house — there is no licence budget, so there is no fallback.** See
+[adr/0012](adr/0012-build-gantt-in-house.md).
 
-Price Bryntum, DHTMLX and Syncfusion licences **before Phase 2 starts**, so the
-buy-versus-build decision is not made under deadline pressure at week five.
+Budgeted at **5–6 EW**, not a three-week timebox: a timebox with nothing behind
+it protects nothing, it just produces pressure. The schedule is protected by
+staged scope instead, where each stage ships independently:
 
-Ship read-only first; drag-to-reschedule is a follow-up.
+| Stage | Scope | EW |
+|---|---|---|
+| 1 | Read-only: timescale, bars, zoom, virtualized rows | 2 |
+| 2 | Dependency arrows | 1 |
+| 3 | Drag to move and resize | 1.5 |
+| 4 | Critical path, over-allocation, baseline | 1 |
+| 5 | Export | 0.5 |
+
+**Stage 1 alone satisfies "see the plan over time."** Stages 3–5 are deferrable
+without the feature being absent.
+
+The virtualized-timescale core is shared with `Timeline`, the roadmap view and
+the capacity view — three requirements from one component, which a licensed
+drop-in would not have given us.
 
 ## 4. Conventions
 
@@ -113,6 +127,6 @@ type scale is for. Two densities:
 |---|---|
 | Design-system churn breaking call sites mid-flight | Split and Radix re-base both land in Phase 0, prop signatures preserved |
 | `DataGrid` becomes a second product | Built on TanStack Table, not from scratch; scope written down before starting |
-| Gantt overruns | Three-week timebox, licences priced in advance, read-only first |
+| Gantt overruns, with no purchase fallback | Staged scope where Stage 1 is independently useful; reverse-check if Stage 1 exceeds 3 EW |
 | Dark mode regressions | Storybook + Chromatic on both themes for every primitive; colour-literal lint |
 | Primitives accumulating domain knowledge | `packages/ui` may not import internal packages — checked in CI |

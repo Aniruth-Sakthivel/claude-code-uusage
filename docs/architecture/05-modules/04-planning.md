@@ -1,6 +1,7 @@
 # Module 4 — Planning: sprints, releases, roadmap
 
-**Phase 2** · ~26–32 EW
+**Phase 2** · ~29–37 EW (Gantt is built in-house — see
+[adr/0012](../adr/0012-build-gantt-in-house.md))
 
 ## 1. Objectives
 
@@ -119,7 +120,7 @@ projects over 500 issues.
 
 | Risk | Mitigation |
 |---|---|
-| **Gantt overruns** — genuinely 4–8 weeks | Three-week timebox. Price Bryntum/DHTMLX/Syncfusion **before** Phase 2 starts. Read-only first, drag later |
+| **Gantt overruns, with no purchase fallback** — genuinely 4–8 weeks elsewhere | Budgeted at 5–6 EW and staged, so Stage 1 (read-only) ships independently and Stages 3–5 are deferrable. Reverse-check if Stage 1 alone exceeds 3 EW. See [adr/0012](../adr/0012-build-gantt-in-house.md) |
 | Burndown disagrees with what people remember | Computed from history; the sprint report shows scope-change events explicitly |
 | Dependency graph becomes unrenderable | Cap dependency depth at 10; collapse chains visually beyond that |
 | Roadmap and Gantt become two implementations of one thing | Roadmap is a coarse Gantt over the same component with a quarter timescale |
@@ -133,7 +134,9 @@ projects over 500 issues.
 5. Sprint report
 6. Milestones and releases
 7. Dependencies with cycle detection
-8. Gantt, read-only
-9. Gantt, drag to reschedule
-10. Roadmap
-11. Capacity planning
+8. Gantt Stage 1 — read-only timescale, bars, zoom, virtualized rows
+9. Gantt Stage 2 — dependency arrows
+10. Roadmap (reuses the Gantt timescale core at quarter zoom)
+11. Gantt Stage 3 — drag to move and resize
+12. Capacity planning (reuses the same core)
+13. Gantt Stages 4–5 — critical path, baseline, export. **Deferrable**

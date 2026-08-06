@@ -17,6 +17,19 @@ An ADR without reversal criteria is an opinion with a number on it.
 | [0008](0008-cursor-pagination.md) | Cursor pagination | Accepted |
 | [0009](0009-uuidv7-keys.md) | UUIDv7 primary keys | Accepted |
 | [0010](0010-frontend-state.md) | TanStack Query + URL + Zustand, no Redux | Accepted |
+| [0011](0011-build-sso-in-house.md) | Build SAML SSO and SCIM in-house | Accepted |
+| [0012](0012-build-gantt-in-house.md) | Build the Gantt chart in-house | Accepted |
+
+## Standing constraint: no paid components
+
+**There is no budget for licensed components or paid service tiers.** ADRs 0011
+and 0012 are both consequences of it, and it applies to every future decision:
+prefer open-source libraries we can host and audit, and where a build is the only
+option, stage the scope so the first stage is independently useful.
+
+Where buying would have been the better engineering choice, the ADR says so.
+That is not second-guessing the constraint — it is what makes the decision cheap
+to revisit if budget appears.
 
 ## Format
 

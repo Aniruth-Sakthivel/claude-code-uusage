@@ -51,7 +51,7 @@ and one place where scoping is enforced.
 | Workers | Render Background Worker | Same image, independent scaling |
 | Cron | Render Cron → enqueue; BullMQ repeatable jobs fan out per workspace | Cron triggers "enqueue digests for all workspaces"; BullMQ does the N jobs with retries |
 | Postgres | Supabase, session/direct pooler, `pool.max: 10–20` | No longer serverless, so drop the `max:1` hack. Keeps Auth colocated and the Drizzle tooling intact |
-| Auth | Supabase Auth | Already integrated (ES256 + remote JWKS via `jose`). Supplies MFA, magic link, OAuth and SAML — four requirements met by configuration |
+| Auth | Supabase Auth (free tier) | Already integrated (ES256 + remote JWKS via `jose`). Supplies password, magic link, OAuth and MFA at no cost. **SAML and SCIM are built in-house** — no budget for a paid tier ([adr/0011](adr/0011-build-sso-in-house.md)) |
 | Redis | Managed, private network | BullMQ, realtime pub/sub, rate-limit buckets, hot cache. Not Upstash: BullMQ is chatty and per-command pricing punishes it |
 | Object storage | Cloudflare R2 | S3 API, presigned PUT/GET, **zero egress** — which matters when every issue has attachments |
 | Edge | Cloudflare | DNS, TLS, WAF, edge rate limiting, DDoS |
