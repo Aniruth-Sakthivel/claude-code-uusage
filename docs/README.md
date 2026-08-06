@@ -6,6 +6,10 @@ project. Our own scanner was written from scratch against Claude Code's on-disk
 JSONL format.
 
 ## Documents
+- **[RUNNING.md](RUNNING.md)** — how to run the API, dashboard and agent locally,
+  plus an end-to-end smoke test. Start here.
+- **[DEPLOY.md](DEPLOY.md)** — deploying to Netlify as one site (static dashboard
+  plus the API as a serverless function on the same origin).
 - **[UPSTREAM_AUDIT.md](UPSTREAM_AUDIT.md)** — a **format reference** describing how
   Claude Code stores usage data on disk (independently observed from real
   transcripts). We use this *knowledge*, not anyone's code.

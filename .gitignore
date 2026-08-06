@@ -11,6 +11,11 @@ agent/build/
 agent/dist/
 agent/*.spec
 
+# Locally-built agent wheels/sdists. Releases are published to PyPI by
+# .github/workflows/publish-agent.yml, so a built artifact in the tree is a
+# stale copy of something the registry already owns.
+dist-test/
+
 # Databases / local state
 *.db
 *.db-wal
