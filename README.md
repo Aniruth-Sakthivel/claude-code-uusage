@@ -98,8 +98,8 @@ Open **http://localhost:5173**:
    [Default admin account](#default-admin-account) below, then change the
    password.
 2. **Connect this PC** — copy the single generated command, run it in PowerShell.
-   It installs the agent, registers the machine, scans, syncs, and schedules
-   scan + sync every 15 minutes.
+   It installs the agent, registers the machine, scans, syncs, and wires Claude
+   Code's session hooks so the agent runs only while you have a session open.
 3. Usage appears on the dashboard after the first sync.
 
 ### Default admin account

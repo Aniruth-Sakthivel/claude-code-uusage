@@ -118,11 +118,16 @@ export const commandAckRequest = z.object({
  * endpoint must never be the reason a machine stops checking in.
  */
 export const agentStatusRequest = z.object({
-  state: z.enum(["idle", "scanning", "scanned", "syncing", "paused", "error"]),
+  // `stopped` is terminal: the agent finished and exited because no Claude
+  // Code session is open. Without it here the agent's own shutdown report is
+  // rejected, and every idle machine decays into looking stalled.
+  state: z.enum(["idle", "scanning", "scanned", "syncing", "paused", "stopped", "error"]),
   detail: z.string().max(255).default(""),
   scan_interval_seconds: z.number().int().min(1).max(86_400).nullish(),
   last_scan_at: z.string().datetime({ offset: true }).nullish(),
   last_scan_duration_ms: z.number().min(0).max(86_400_000).nullish(),
+  /** Claude Code sessions live on that machine when it reported. */
+  active_sessions: z.number().int().min(0).max(10_000).nullish(),
 });
 
 // ── agent endpoints ───────────────────────────────────────────────────────────

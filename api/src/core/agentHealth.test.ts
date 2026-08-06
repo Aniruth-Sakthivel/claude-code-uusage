@@ -17,6 +17,37 @@ describe("deriveAgentHealth", () => {
     expect(deriveAgentHealth(agoMinutes(1), now).health).toBe("healthy");
   });
 
+  describe("dormant — the agent stopped because nobody is using Claude Code", () => {
+    it("reports dormant when the last word was a clean stop", () => {
+      const v = deriveAgentHealth(agoMinutes(30), now, "stopped");
+      expect(v.health).toBe("dormant");
+      expect(v.reason).toMatch(/no Claude Code session/i);
+    });
+
+    /**
+     * The whole point: an agent that only runs during sessions is silent all
+     * night and all weekend. Ageing that into "dead" would alarm on every
+     * healthy PC in the fleet.
+     */
+    it("stays dormant no matter how long the silence lasts", () => {
+      expect(deriveAgentHealth(agoMinutes(3 * 24 * 60), now, "stopped").health).toBe("dormant");
+    });
+
+    it("still reports how long it has been quiet", () => {
+      expect(deriveAgentHealth(agoMinutes(45), now, "stopped").silent_for_ms).toBe(45 * 60_000);
+    });
+
+    /** Silence with no clean stop is the case that genuinely needs an alarm. */
+    it("does not excuse silence from an agent that never said it stopped", () => {
+      expect(deriveAgentHealth(agoMinutes(30 * 60), now, "scanning").health).toBe("dead");
+      expect(deriveAgentHealth(agoMinutes(30 * 60), now, null).health).toBe("dead");
+    });
+
+    it("prefers never over dormant when it has never checked in", () => {
+      expect(deriveAgentHealth(null, now, "stopped").health).toBe("never");
+    });
+  });
+
   /** The scheduled task runs every 15 minutes, so 18 must not read as broken. */
   it("stays healthy across a normal 15-minute gap", () => {
     expect(deriveAgentHealth(agoMinutes(18), now).health).toBe("healthy");
@@ -29,8 +60,9 @@ describe("deriveAgentHealth", () => {
   it("is stalled after hours of silence", () => {
     const v = deriveAgentHealth(agoMinutes(6 * 60), now);
     expect(v.health).toBe("stalled");
-    // The exact case someone hits after closing the terminal.
-    expect(v.reason).toMatch(/terminal closes/i);
+    // The case that still deserves attention: quiet, but it never reported
+    // stopping — so it was killed rather than finishing a session.
+    expect(v.reason).toMatch(/without reporting that it stopped/i);
   });
 
   it("is dead after more than a day", () => {

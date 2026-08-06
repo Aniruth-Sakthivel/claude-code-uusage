@@ -53,9 +53,11 @@ export interface SystemRow extends ScanActivity {
   projects: number;
   /** True until the agent's first successful sync — drives the setup hint. */
   never_synced: boolean;
+  /** Claude Code sessions open when the agent last reported. */
+  active_sessions: number;
 }
 
-export type AgentHealth = "never" | "healthy" | "late" | "stalled" | "dead";
+export type AgentHealth = "never" | "dormant" | "healthy" | "late" | "stalled" | "dead";
 
 export type AgentState =
   | "unknown"
@@ -64,6 +66,7 @@ export type AgentState =
   | "scanned"
   | "syncing"
   | "paused"
+  | "stopped"
   | "error";
 
 export interface SystemCreated {
@@ -279,6 +282,8 @@ export interface Summary {
   month_tokens: number;
   total_tokens: number;
   active_systems: number;
+  /** Machines with a Claude Code session open right now. */
+  in_session_systems: number;
   total_systems: number;
   highest: RankingItem | null;
   /** True when this user sees only a subset, so percentages are relative. */

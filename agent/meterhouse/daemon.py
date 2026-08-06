@@ -1,13 +1,27 @@
-"""Long-running agent process: scheduled scanning + optional real-time push.
+"""Session-scoped agent process: scanning + optional real-time push.
 
-This is what `meterhouse daemon` runs (the install script points a Scheduled
-Task at this, triggered once at logon, instead of spawning a fresh short-lived
-process every N minutes — a WebSocket connection needs a process that stays
-alive to hold it).
+This is what `meterhouse daemon` runs. It is **not** a service that sits on the
+machine forever: a Claude Code `SessionStart` hook spawns it, and it exits once
+the last session has ended. On a machine where nobody is working there is no
+Meterhouse process at all — which is the point, since every scan, stat sweep
+and heartbeat it used to perform between sessions was measuring nothing.
+
+The lifecycle, end to end:
+
+  SessionStart hook -> registry record -> spawn (this)
+      -> scan on the interval, and early whenever a transcript grows
+  SessionEnd hook   -> registry record removed
+      -> grace period -> final scan + sync -> report "stopped" -> exit
+
+Sessions come from :mod:`meterhouse.sessions`, never from this module's own
+guesswork, and the daemon holds no session state of its own — restart it
+mid-session and it picks up exactly where it was. `--always-on` restores the
+old run-forever behaviour for machines that cannot register hooks.
 
 Responsibilities are split by module on purpose (each independently testable):
   - scanner.scan()   -- unchanged, does the actual transcript ingestion
   - sync.sync_store  -- unchanged, does the actual REST upload
+  - sessions.SessionRegistry -- which Claude Code sessions are live
   - ws_client.WSClient -- optional real-time status/metrics channel
   - health.HealthState -- what `meterhouse health` reports
   - config.AgentConfig -- all the tunables, no source edits required
@@ -31,6 +45,7 @@ from .identity import Identity, load_identity
 from .lockfile import SingleInstanceLock
 from .logging_setup import configure_logging, get_logger
 from .scanner import scan as run_scan
+from .sessions import SessionRegistry
 from .store import Store, default_db_path
 
 log = get_logger("meterhouse.daemon")
@@ -66,7 +81,8 @@ def _process_metrics() -> dict:
 
 
 class Daemon:
-    def __init__(self, config: AgentConfig, identity: Identity, db_path=None) -> None:
+    def __init__(self, config: AgentConfig, identity: Identity, db_path=None,
+                 always_on: bool | None = None, sessions: SessionRegistry | None = None) -> None:
         self._cfg = config
         self._ident = identity
         self._db_path = db_path or default_db_path()
@@ -76,6 +92,44 @@ class Daemon:
         self._paused = asyncio.Event()
         self._ws = None
         self._activity = ActivityWatcher()
+        self._sessions = sessions if sessions is not None else SessionRegistry()
+        self._always_on = config.always_on if always_on is None else always_on
+        #: When the session count first hit zero, for the grace period. None
+        #: whenever a session is live.
+        self._idle_since: float | None = None
+
+    def _active_sessions(self) -> int:
+        try:
+            return len(self._sessions.active(self._cfg.session_idle_timeout_seconds))
+        except Exception:  # noqa: BLE001 - never crash on a bad registry read
+            # Reporting zero errs toward shutting down rather than toward an
+            # agent that runs forever on a machine nobody is using.
+            log.exception("session registry unreadable")
+            return 0
+
+    def _sessions_live(self) -> bool:
+        """Is there still a reason to be running?
+
+        Zero sessions does not mean "exit now": closing one Claude Code window
+        and opening another would otherwise tear the daemon down and rebuild it
+        seconds later. The grace period absorbs that, and only sustained
+        emptiness ends the process.
+        """
+        if self._always_on:
+            return True
+
+        count = self._active_sessions()
+        if count > 0:
+            self._idle_since = None
+            self._health.active_sessions = count
+            return True
+
+        self._health.active_sessions = 0
+        if self._idle_since is None:
+            self._idle_since = time.monotonic()
+            log.info("last claude session ended, entering shutdown grace",
+                     extra={"grace_seconds": self._cfg.shutdown_grace_seconds})
+        return (time.monotonic() - self._idle_since) < self._cfg.shutdown_grace_seconds
 
     async def _run_command(self, message: dict) -> None:
         """Handle a server-pushed command, e.g.
@@ -133,23 +187,11 @@ class Daemon:
         this mutates the same config object the loop holds. `ws_enabled` /
         `ws_url` are read only at daemon startup, so those need a restart to
         take effect; still applied and saved so the next start picks them up.
+
+        The allowlist and clamping live on `AgentConfig` so the one-shot CLI
+        path applies exactly the same rules — see `AgentConfig.apply_patch`.
         """
-        allowed = {
-            "scan_interval_seconds",
-            "ws_enabled",
-            "session_titles_enabled",
-            "account_reporting_enabled",
-        }
-        applied = []
-        for key, value in payload.items():
-            if key not in allowed:
-                continue
-            setattr(self._cfg, key, value)
-            applied.append(key)
-        if applied:
-            self._cfg.validated()
-            self._cfg.save()
-        return applied
+        return self._cfg.apply_patch(payload)
 
     def _ack_command(self, command_id, status: str, detail: str) -> None:
         if not self._ident.server_url or not self._ident.api_key:
@@ -183,6 +225,11 @@ class Daemon:
                 state,
                 detail,
                 scan_interval_seconds=self._cfg.scan_interval_seconds,
+                # Sent on every status line so the dashboard can tell a machine
+                # that is deliberately quiet from one that has stopped
+                # reporting — under this architecture silence is the normal
+                # resting state, not a fault.
+                active_sessions=self._health.active_sessions,
                 **extra,
             )
         except Exception:  # noqa: BLE001 - status is diagnostics, never critical
@@ -332,15 +379,23 @@ class Daemon:
             log.warning("account report skipped", extra={"reason": f"{type(exc).__name__}: {exc}"})
 
     async def _scan_loop(self) -> None:
-        """Scan on the interval, or as soon as someone starts using Claude.
+        """Scan while a session is open, then stop.
 
-        The interval is the floor, not the cadence. Waiting it out means a
-        session that starts a second after a tick is invisible on the dashboard
-        for a full interval, which is exactly when someone looks and concludes
-        the agent is not running. The wait is therefore broken into short polls
-        of the transcript files, and any change scans immediately.
+        Within a session the interval is a floor, not a cadence: waiting it out
+        would mean work done a second after a tick is invisible on the
+        dashboard for a full interval, which is exactly when someone looks and
+        concludes the agent is not running. The wait is therefore broken into
+        short polls of the transcript files, and any change scans immediately.
+
+        That stat sweep is the one piece of polling kept deliberately — hooks
+        report *that* a session is active but carry no token counts, so only
+        the transcripts can say how much was used. It now costs nothing when it
+        matters, because outside a session this loop is not running at all.
         """
         while not self._stop.is_set():
+            if not self._sessions_live():
+                log.info("no active claude code sessions; shutting down")
+                return
             await self._scan_once(trigger="schedule")
             self._activity.mark_scanned()
             if not await self._wait_for_next_scan():
@@ -349,7 +404,10 @@ class Daemon:
     async def _wait_for_next_scan(self) -> bool:
         """Sleep until the next scan is due, or until Claude activity appears.
 
-        Returns False when the daemon is stopping.
+        Returns False when the daemon is stopping. Returning True when the last
+        session has gone is intentional: :meth:`_scan_loop` re-checks sessions
+        before scanning, so control returns there and the daemon exits without
+        performing another scheduled scan first.
         """
         deadline = time.monotonic() + self._cfg.scan_interval_seconds
         loop = asyncio.get_running_loop()
@@ -367,6 +425,12 @@ class Daemon:
                 return False  # stop requested
             except asyncio.TimeoutError:
                 pass
+
+            # Checked here as well as at the top of the loop so a session that
+            # ends mid-interval is noticed within seconds, rather than the
+            # daemon lingering until its next scheduled tick.
+            if not self._sessions_live():
+                return True
 
             # Paused means the operator asked for no scheduled scans; activity
             # must not quietly override that.
@@ -420,16 +484,66 @@ class Daemon:
         )
         asyncio.create_task(self._ws.run())
 
+    async def _shutdown(self) -> None:
+        """Leave nothing behind: last tokens captured, dashboard told, exit.
+
+        The final scan is the reason the `SessionEnd` hook does no work of its
+        own. Everything written during the last turn — often the largest part
+        of a session — lands after the previous scheduled scan, and would be
+        stranded on disk until some later run if the daemon simply exited.
+        """
+        try:
+            await self._scan_once(trigger="shutdown")
+        except Exception:  # noqa: BLE001 - shutdown must complete regardless
+            log.exception("final scan failed")
+
+        try:
+            self._sessions.reap_stale(self._cfg.session_idle_timeout_seconds)
+        except Exception:  # noqa: BLE001
+            log.exception("could not reap stale sessions")
+
+        # Reported last, and deliberately after the final scan's own "idle"
+        # line, so this is the state the dashboard is left holding. It is what
+        # distinguishes a machine that finished cleanly from one that died —
+        # without it, every idle PC would eventually read as stalled.
+        self._health.record_stopped()
+        await self._report_status_async(
+            "stopped", "no active Claude Code sessions", last_scan_at=self._health.last_scan_at
+        )
+        try:
+            self._health.save()
+        except Exception:  # noqa: BLE001
+            log.exception("failed to persist health state")
+
     async def run(self) -> None:
         log.info(
             "daemon starting",
             extra={
                 "system_id": self._ident.system_id,
                 "scan_interval_seconds": self._cfg.scan_interval_seconds,
+                "session_idle_timeout_seconds": self._cfg.session_idle_timeout_seconds,
+                "always_on": self._always_on,
                 "ws_enabled": self._cfg.ws_enabled,
             },
         )
+
+        # A spawn that arrives with nothing to do still does the useful half of
+        # the job — catch up on anything on disk — and then gets out of the way
+        # rather than idling. This covers a stale hook, a race with a session
+        # that ended while we were starting, and the daily catch-up task.
+        if not self._always_on and self._active_sessions() == 0:
+            log.info("no active claude code sessions at startup; one-shot catch-up")
+            await self._scan_once(trigger="startup")
+            self._health.record_stopped()
+            await self._report_status_async("stopped", "no active Claude Code sessions")
+            try:
+                self._health.save()
+            except Exception:  # noqa: BLE001
+                log.exception("failed to persist health state")
+            return
+
         await self._start_ws()
+        self._health.active_sessions = self._active_sessions()
         self._health.save()
         # Publish the cadence immediately, so the dashboard can show this
         # machine's interval and next-scan countdown from the moment it starts
@@ -449,18 +563,24 @@ class Daemon:
         finally:
             self._stop.set()
             health_task.cancel()
+            await self._shutdown()
             if self._ws is not None:
                 await self._ws.stop()
             log.info("daemon stopped")
 
 
-def run_daemon(display_name: str | None = None, db_path=None) -> None:
-    """Run the daemon, unless one is already running on this machine.
+def run_daemon(display_name: str | None = None, db_path=None,
+               always_on: bool | None = None) -> None:
+    """Run the daemon, unless one is already running for this user.
 
-    The supervising scheduled task fires every few minutes precisely so a dead
-    daemon comes back quickly; the lock is what makes that safe. Exiting quietly
-    (not with an error) keeps Task Scheduler's history clean — a relaunch that
-    finds a healthy daemon is the expected case, not a failure.
+    The lock is what lets every hook fire `ensure_daemon_running` blindly: a
+    `SessionStart` in a second window, or a `UserPromptSubmit` after a crash,
+    both just try to start one, and a launch that finds a healthy daemon exits
+    immediately. Exiting quietly (not with an error) keeps that the expected
+    case rather than a logged failure.
+
+    The lock lives under the user's home, so concurrent users on a shared
+    machine each get their own daemon and never contend.
     """
     lock = SingleInstanceLock()
     if not lock.acquire():
@@ -470,8 +590,14 @@ def run_daemon(display_name: str | None = None, db_path=None) -> None:
     try:
         ident = load_identity(display_name=display_name)
         cfg = AgentConfig.load().validated()
-        configure_logging(level=cfg.log_level, json_output=cfg.log_json)
-        daemon = Daemon(cfg, ident, db_path=db_path)
+        configure_logging(
+            level=cfg.log_level,
+            json_output=cfg.log_json,
+            log_file=cfg.resolved_log_file(),
+            max_bytes=cfg.log_file_max_bytes,
+            backups=cfg.log_file_backups,
+        )
+        daemon = Daemon(cfg, ident, db_path=db_path, always_on=always_on)
         try:
             asyncio.run(daemon.run())
         except KeyboardInterrupt:

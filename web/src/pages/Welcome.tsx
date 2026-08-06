@@ -40,8 +40,9 @@ export function Welcome() {
         </h1>
         <p className="mt-1.5 max-w-2xl text-base text-muted">
           Meterhouse reads the transcript files Claude Code already writes on each PC and
-          reports how many tokens each machine uses. Connect your first PC below — it
-          takes one command.
+          reports how many tokens each machine uses. Connect your first PC below — name
+          it, then paste one line into PowerShell on that machine. Nothing runs in the
+          background until you actually use Claude Code.
         </p>
       </div>
 

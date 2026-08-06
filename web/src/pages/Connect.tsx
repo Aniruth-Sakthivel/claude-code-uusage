@@ -77,9 +77,10 @@ export function Connect() {
         <Eyebrow>Setup</Eyebrow>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Connect a PC</h1>
         <p className="mt-1.5 max-w-2xl text-base text-muted">
-          Run one command in PowerShell on the machine you want to track. The website
-          only generates the setup instructions; the agent on that PC does the scan and
-          sends data back to the dashboard every 15 minutes.
+          Paste one line into PowerShell on the machine you want to track. The website
+          only generates the setup command; the agent on that PC does the reading and
+          reports back while you work — it starts with your Claude Code sessions and
+          stops when you finish.
         </p>
       </div>
 

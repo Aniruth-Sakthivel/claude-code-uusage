@@ -73,3 +73,37 @@ class TestRegisterRejectsNonUrls:
         saved, out = self._run(monkeypatch, capsys, "'meterhouse.netlify.app'")
         assert "Invalid --server" in out
         assert saved == {}
+
+
+class TestNewSubcommands:
+    """The hook entry point is wired into settings.json, so its argument
+    contract is what Claude Code depends on."""
+
+    def test_hook_accepts_each_event(self):
+        from meterhouse.cli import build_parser
+
+        parser = build_parser()
+        for event in ("session-start", "session-end", "keepalive"):
+            assert parser.parse_args(["hook", event]).event == event
+
+    def test_hook_rejects_an_unknown_event(self):
+        import pytest
+
+        from meterhouse.cli import build_parser
+
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["hook", "not-an-event"])
+
+    def test_daemon_takes_always_on(self):
+        from meterhouse.cli import build_parser
+
+        parser = build_parser()
+        assert parser.parse_args(["daemon"]).always_on is False
+        assert parser.parse_args(["daemon", "--always-on"]).always_on is True
+
+    def test_hook_management_commands_exist(self):
+        from meterhouse.cli import build_parser
+
+        parser = build_parser()
+        for name in ("install-hooks", "uninstall-hooks", "sessions"):
+            assert parser.parse_args([name]).func is not None

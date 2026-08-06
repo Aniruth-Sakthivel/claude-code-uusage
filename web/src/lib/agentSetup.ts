@@ -45,15 +45,32 @@ export function accountReportCommands(): string {
 }
 
 /**
- * Scheduled task that keeps a PC reporting with no terminal open — the answer
- * to "do I have to leave this window running?". `meterhouse daemon` is the
- * foreground alternative and dies with its terminal, so it is not offered here
- * as the way to keep a machine connected.
+ * The answer to "do I have to leave a window running?" — no.
+ *
+ * This registers Claude Code's own session hooks, so the agent starts when a
+ * session starts and stops when the last one ends. It replaced a scheduled task
+ * that ran a scan+sync every 15 minutes forever: that task polled 96 times a
+ * day on machines where nobody had opened Claude Code at all, and it is what
+ * the agent's own installer now removes on upgrade.
  */
-export const BACKGROUND_TASK_COMMAND = [
+export const INSTALL_HOOKS_COMMAND = "python -m meterhouse install-hooks";
+
+/** Shows live sessions plus whether the hooks and agent are actually running —
+ * the one command to run when a PC is not reporting. */
+export const SESSIONS_COMMAND = "python -m meterhouse sessions";
+
+/**
+ * A once-a-day safety net, in case hook installation ever fails silently.
+ * Scanning is incremental and idempotent, so a machine a day behind still
+ * reports its full history.
+ */
+export const DAILY_CATCHUP_COMMAND = [
   "$py = (Get-Command python).Source",
-  'schtasks /Create /SC MINUTE /MO 15 /TN "Meterhouse Scan+Sync" /F /ST 00:00 ' +
-    '/TR "cmd /c $py -m meterhouse scan --quiet && $py -m meterhouse sync --quiet"',
+  "$pyw = Join-Path (Split-Path $py) 'pythonw.exe'   # no console window",
+  "$exe = if (Test-Path $pyw) { $pyw } else { $py }",
+  "$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse once --quiet'",
+  "$trg = New-ScheduledTaskTrigger -Daily -At '12:30'",
+  "Register-ScheduledTask -TaskName 'Meterhouse Daily Catch-up' -Action $act -Trigger $trg -Force",
 ].join("\n");
 
 export function fullSetupBlock(opts: {
@@ -73,6 +90,9 @@ export function fullSetupBlock(opts: {
     ``,
     `# 3 — Scan local transcripts and send to dashboard`,
     scanSyncCommands(),
+    ``,
+    `# 4 — Start and stop with your Claude Code sessions`,
+    INSTALL_HOOKS_COMMAND,
   ].join("\n");
 }
 
@@ -107,9 +127,11 @@ export function clearStashedConnect(): void {
 }
 
 /**
- * Foreground daemon. Dies with its terminal, so it is offered as a deliberate
- * alternative to the scheduled task rather than as a way to keep a PC
- * reporting — and it is the only path that reports Claude account usage on
- * agent 0.1.2 and older.
+ * Run the agent in the foreground to watch it work.
+ *
+ * It scans while a Claude Code session is open and exits on its own when the
+ * last one ends — so this is a diagnostic, not the way to keep a PC reporting.
+ * The hooks do that. (`--always-on` restores the old run-forever behaviour for
+ * machines whose settings.json is locked down by policy.)
  */
 export const DAEMON_COMMAND = "python -m meterhouse daemon";

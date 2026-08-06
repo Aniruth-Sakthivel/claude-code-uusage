@@ -23,6 +23,7 @@ const LABEL: Record<AgentState, string> = {
   scanned: "Scan complete",
   idle: "Completed",
   paused: "Paused",
+  stopped: "Stopped",
   error: "Error",
   unknown: "No report",
 };
@@ -33,6 +34,8 @@ const TONE: Record<AgentState, "neutral" | "accent" | "good" | "critical"> = {
   scanned: "good",
   idle: "good",
   paused: "neutral",
+  // Not a fault: the agent finished and exited because no session is open.
+  stopped: "neutral",
   error: "critical",
   unknown: "neutral",
 };
@@ -95,6 +98,9 @@ export function ScanActivity({
   } else if (state === "unknown") {
     // Nothing recent to trust — say so plainly instead of implying it is idle.
     detail = neverReported ? "has never reported" : "not reporting right now";
+  } else if (state === "stopped") {
+    // There is no countdown to show: it restarts on a session, not a timer.
+    detail = scan.agent_state_detail || "no Claude Code session open";
   } else if (remaining !== null && remaining > 0) {
     detail = `next scan in ${fmtCountdown(remaining)}`;
   } else if (remaining !== null) {

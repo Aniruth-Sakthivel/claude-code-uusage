@@ -13,6 +13,8 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 
 class _JsonFormatter(logging.Formatter):
@@ -36,8 +38,24 @@ class _JsonFormatter(logging.Formatter):
 _RESERVED = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__.keys()) | {"message"}
 
 
-def configure_logging(level: str = "INFO", json_output: bool = True) -> logging.Logger:
-    """Idempotent: safe to call once at daemon startup."""
+def configure_logging(
+    level: str = "INFO",
+    json_output: bool = True,
+    log_file=None,
+    stream: bool = True,
+    max_bytes: int = 1_000_000,
+    backups: int = 2,
+) -> logging.Logger:
+    """Idempotent: safe to call once at daemon startup.
+
+    `log_file` matters more than it used to. The daemon is started detached and
+    windowless by a Claude Code hook, so its stderr goes to DEVNULL — without a
+    file, a background agent's entire history of scans, errors and shutdowns
+    would be unobservable. Rotating, because this runs unattended for months.
+
+    `stream=False` is for hook processes: their stderr belongs to Claude Code,
+    and metering has no business writing to a user's session.
+    """
     logger = logging.getLogger("meterhouse")
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
     logger.propagate = False
@@ -45,14 +63,31 @@ def configure_logging(level: str = "INFO", json_output: bool = True) -> logging.
     if logger.handlers:
         return logger  # already configured (e.g. re-entrant call in tests)
 
-    handler = logging.StreamHandler(sys.stderr)
-    if json_output:
-        handler.setFormatter(_JsonFormatter())
-    else:
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
-        )
-    logger.addHandler(handler)
+    def _formatter() -> logging.Formatter:
+        if json_output:
+            return _JsonFormatter()
+        return logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+
+    if stream:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(_formatter())
+        logger.addHandler(handler)
+
+    if log_file:
+        try:
+            path = Path(log_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = RotatingFileHandler(
+                path, maxBytes=max_bytes, backupCount=backups, encoding="utf-8"
+            )
+            file_handler.setFormatter(_formatter())
+            logger.addHandler(file_handler)
+        except OSError:
+            # An unwritable log path must not stop the agent from doing its job.
+            pass
+
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
     return logger
 
 

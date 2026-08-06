@@ -9,9 +9,14 @@
 Local mode needs no central server. Central-mode commands (register/sync/
 heartbeat) push usage to a central dashboard; see `--help` for each.
 
-`daemon` runs continuously: scans on a timer (default 60s, configurable via
-runtime.json or METERHOUSE_* env vars) and, if configured, holds a WebSocket
-open for real-time status push. `health` reports the daemon's last-known
+`install-hooks` is the normal way to run the agent in the background: it wires
+Claude Code's session hooks so the daemon starts with a session and exits when
+the last one ends, leaving no process behind on an idle machine.
+
+`daemon` is what those hooks launch: it scans on a timer (default 60s,
+configurable via runtime.json or METERHOUSE_* env vars) for as long as a
+session is open, and if configured holds a WebSocket open for real-time status
+push. `sessions` shows what it thinks is live; `health` reports its last-known
 state.
 """
 
@@ -41,23 +46,67 @@ def _row_cost(r) -> float:
     return calc_cost(r["model"], r["inp"] or 0, r["out"] or 0, r["cr"] or 0, r["cc"] or 0)
 
 
+def _active_session_count() -> int:
+    """Claude Code sessions live on this machine right now."""
+    from .sessions import SessionRegistry
+
+    try:
+        cfg = AgentConfig.load().validated()
+        return len(SessionRegistry().active(cfg.session_idle_timeout_seconds))
+    except Exception:  # noqa: BLE001 - a status field is never worth an error
+        return 0
+
+
 def _status(ident, state, detail="", **extra):
     """Best-effort status ping for the dashboard's live agent view.
 
     Central mode only, and every failure is swallowed — the scan or sync this
     annotates has to work the same on a machine that cannot reach the server.
+
+    `active_sessions` rides along by default. Without it a one-shot run would
+    leave whatever the daemon last wrote, so a machine could sit at
+    "1 active session" indefinitely after that session ended.
     """
     if not (ident.server_url and ident.api_key):
         return
     from .sync import SyncClient
 
+    extra.setdefault("active_sessions", _active_session_count())
     try:
         SyncClient(ident.server_url, ident.api_key).report_status(state, detail, **extra)
     except Exception:  # noqa: BLE001
         pass
 
 
-def cmd_scan(args):
+def _report_finished(ident, detail=""):
+    """The last status a one-shot run leaves behind.
+
+    This is the whole reason an idle machine reads correctly. `scan`, `sync`
+    and `once` used to end on "idle" — a mid-cycle state that means "working,
+    between scans". On the machines these commands actually run on (the daily
+    catch-up task, on a PC where nobody opened Claude Code) that state then sat
+    there ageing, and the dashboard graded the silence that followed as stalled
+    and then dead. Reporting the terminal state instead is what marks the
+    machine dormant.
+
+    When a session *is* live the daemon owns the status line, so this reports
+    "idle" and leaves the next-scan countdown intact rather than claiming the
+    agent stopped underneath it.
+    """
+    sessions = _active_session_count()
+    if sessions:
+        _status(ident, "idle", detail or "agent running", active_sessions=sessions)
+    else:
+        _status(ident, "stopped", "no active Claude Code sessions", active_sessions=0)
+
+
+def cmd_scan(args, report_finished: bool = True):
+    """One-shot scan.
+
+    `report_finished` is False when `once` runs this, because the sync that
+    immediately follows reports the terminal state for the pair — otherwise the
+    dashboard would see the machine stop and then start syncing again.
+    """
     ident = load_identity(display_name=args.display_name)
     started = datetime.now(timezone.utc)
     _status(ident, "scanning", "one-shot scan")
@@ -71,6 +120,8 @@ def cmd_scan(args):
         last_scan_at=started.isoformat(),
         last_scan_duration_ms=round(duration_ms, 1),
     )
+    if report_finished:
+        _report_finished(ident, f"{summary.get('events_inserted', 0)} new events")
     if args.quiet:
         print(summary)
 
@@ -298,13 +349,11 @@ def _run_pending_commands(client, commands, system_id, db_path=None, verbose=Tru
                 summary = run_scan(system_id=system_id, db_path=db_path, verbose=False)
                 detail = f"scanned {summary.get('events_inserted', 0)} new events"
             elif action == "set_config":
-                cfg = AgentConfig.load()
-                applied = []
-                for field, value in payload.items():
-                    if hasattr(cfg, field):
-                        setattr(cfg, field, value)
-                        applied.append(field)
-                cfg.save()
+                # Same allowlist and clamping the daemon applies. This path
+                # previously accepted any attribute that happened to exist and
+                # saved it unvalidated, so one dashboard action reached further
+                # here than it did there.
+                applied = AgentConfig.load().apply_patch(payload)
                 detail = f"applied: {', '.join(applied)}" if applied else "no recognized fields"
             elif action in ("pause", "resume"):
                 status, detail = "skipped", f"{action} needs the daemon; this is a one-shot sync"
@@ -355,7 +404,7 @@ def cmd_sync(args):
             db_path=args.db,
             verbose=not args.quiet,
         )
-        _status(ident, "idle", f"synced {totals['inserted']} events")
+        _report_finished(ident, f"synced {totals['inserted']} events")
     except SyncError as e:
         print(f"Sync failed (offline?) - will retry next run: {e}")
         _status(ident, "error", str(e))
@@ -366,26 +415,100 @@ def cmd_sync(args):
 def cmd_once(args):
     """One full cycle: scan, then sync (which also collects queued commands).
 
-    This is what the scheduled fallback task runs. It exists as a single
+    This is what the daily catch-up task runs. It exists as a single
     subcommand rather than `scan && sync` because the chaining form has to be
     wrapped in `cmd /c` inside a scheduled task's action string, and the nested
     quoting there is a reliable source of tasks that register but never run —
     which left machines silently not reporting.
     """
-    cmd_scan(args)
+    cmd_scan(args, report_finished=False)
     cmd_sync(args)
 
 
 def cmd_daemon(args):
     from .daemon import run_daemon
-    run_daemon(display_name=args.display_name, db_path=args.db)
+    run_daemon(display_name=args.display_name, db_path=args.db,
+               always_on=True if args.always_on else None)
+
+
+def cmd_hook(args):
+    """Run a Claude Code hook handler. Never prints, never fails.
+
+    Not intended to be run by hand — `install-hooks` wires it into
+    `~/.claude/settings.json`, and Claude Code invokes it with the event
+    payload on stdin.
+    """
+    from .hooks import run
+    raise SystemExit(run(args.event))
+
+
+def cmd_install_hooks(args):
+    from .hookinstall import install
+    ok, message = install()
+    print(message)
+    if ok:
+        print("The agent will now start with your next Claude Code session "
+              "and stop when it ends.")
+    else:
+        raise SystemExit(1)
+
+
+def cmd_uninstall_hooks(args):
+    from .hookinstall import uninstall
+    ok, message = uninstall()
+    print(message)
+    if not ok:
+        raise SystemExit(1)
+
+
+def cmd_sessions(args):
+    """Show the Claude Code sessions this machine believes are live.
+
+    The first thing to check when the agent is running and shouldn't be, or
+    isn't running and should: it is the sole input to that decision.
+    """
+    from .hooks import daemon_is_running
+    from .hookinstall import status as hook_status
+    from .sessions import SessionRegistry
+
+    cfg = AgentConfig.load().validated()
+    registry = SessionRegistry()
+    live = registry.active(cfg.session_idle_timeout_seconds)
+
+    print()
+    _hr()
+    print("  Claude Code sessions")
+    _hr()
+    if not live:
+        print("  None active. The agent is not expected to be running.")
+    for record in live:
+        idle = int(record.age_seconds())
+        print(f"  {record.session_id}")
+        print(f"    started {record.started_at}  idle {idle}s")
+        if record.cwd:
+            print(f"    cwd     {record.cwd}")
+    _hr()
+    hooks = hook_status()
+    missing = [event for event, present in hooks["events"].items() if not present]
+    if hooks["error"]:
+        print(f"  Hooks:  could not be read - {hooks['error']}")
+    elif missing:
+        print(f"  Hooks:  NOT installed ({', '.join(missing)}) - run "
+              f"`meterhouse install-hooks`")
+    else:
+        print(f"  Hooks:  installed in {hooks['path']}")
+    print(f"  Daemon: {'running' if daemon_is_running() else 'not running'}")
+    print(f"  Idle timeout: {cfg.session_idle_timeout_seconds}s")
+    _hr()
+    print()
 
 
 def cmd_health(args):
     from .health import HealthState
     state = HealthState.load()
     if state is None:
-        print("No daemon health data yet — is `meterhouse daemon` running?")
+        print("No daemon health data yet. The agent runs only during a Claude Code "
+              "session — run `meterhouse install-hooks`, then start one.")
         return
     print()
     _hr()
@@ -394,6 +517,9 @@ def cmd_health(args):
     print(f"  PID:                 {state.pid}")
     print(f"  Started:             {state.started_at}")
     print(f"  Last update:         {state.updated_at}")
+    print(f"  Active sessions:     {state.active_sessions}")
+    if state.stopped_at:
+        print(f"  Stopped cleanly at:  {state.stopped_at}")
     print(f"  Scans completed:     {state.scans_completed}")
     print(f"  Scans failed:        {state.scans_failed}")
     print(f"  Last scan:           {state.last_scan_at or 'never'}")
@@ -521,10 +647,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     dm = sub.add_parser(
         "daemon",
-        help="run continuously: scheduled scans (config: runtime.json) + optional real-time push",
+        help="scan while a Claude Code session is open, then exit "
+             "(config: runtime.json) + optional real-time push",
     )
     dm.add_argument("--display-name", default=None)
+    dm.add_argument(
+        "--always-on",
+        action="store_true",
+        help="never exit when sessions end (for machines that cannot use hooks)",
+    )
     dm.set_defaults(func=cmd_daemon)
+
+    hk = sub.add_parser("hook", help="internal: Claude Code hook handler")
+    hk.add_argument("event", choices=["session-start", "session-end", "keepalive"])
+    hk.set_defaults(func=cmd_hook)
+
+    sub.add_parser(
+        "install-hooks",
+        help="start/stop the agent automatically with your Claude Code sessions",
+    ).set_defaults(func=cmd_install_hooks)
+    sub.add_parser(
+        "uninstall-hooks", help="remove the Claude Code hooks this agent installed"
+    ).set_defaults(func=cmd_uninstall_hooks)
+    sub.add_parser(
+        "sessions", help="show live Claude Code sessions, hook and daemon state"
+    ).set_defaults(func=cmd_sessions)
 
     sub.add_parser("health", help="show the daemon's last-known status").set_defaults(
         func=cmd_health

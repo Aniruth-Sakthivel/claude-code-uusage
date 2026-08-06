@@ -127,5 +127,29 @@ class Agent:
     def health(self) -> HealthState | None:
         return HealthState.load()
 
-    def daemon(self, display_name: str | None = None) -> None:
-        run_daemon(display_name=display_name, db_path=self.db_path)
+    def daemon(self, display_name: str | None = None, always_on: bool | None = None) -> None:
+        """Run the agent until the last Claude Code session ends, then return.
+
+        This blocks for the lifetime of the session, not forever: with no
+        session open it scans once and returns immediately. Pass
+        `always_on=True` for the old run-until-killed behaviour.
+        """
+        run_daemon(display_name=display_name, db_path=self.db_path, always_on=always_on)
+
+    def sessions(self) -> list:
+        """Claude Code sessions this machine currently believes are live."""
+        from .config import AgentConfig
+        from .sessions import SessionRegistry
+
+        return SessionRegistry().active(AgentConfig.load().validated().session_idle_timeout_seconds)
+
+    def install_hooks(self) -> tuple[bool, str]:
+        """Wire Claude Code's session hooks so the agent runs on demand."""
+        from .hookinstall import install
+
+        return install()
+
+    def uninstall_hooks(self) -> tuple[bool, str]:
+        from .hookinstall import uninstall
+
+        return uninstall()

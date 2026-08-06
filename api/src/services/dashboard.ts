@@ -81,6 +81,18 @@ export async function buildSummary(allowed: Allowed) {
     month_tokens: month,
     total_tokens: total,
     active_systems: systems.filter((s) => isOnline(s.lastSeenAt, now)).length,
+    /**
+     * Machines with a Claude Code session actually open.
+     *
+     * `active_systems` counts a check-in within ten minutes. That used to be a
+     * proxy for "the agent is installed and running", which was true of every
+     * enrolled PC around the clock. Now the agent only runs during a session,
+     * so the same number quietly became "someone is typing right now" — and
+     * shown under a label like "Active PCs" it reads as a broken fleet. This
+     * counts the thing the label was always trying to describe, from what the
+     * agent actually reports.
+     */
+    in_session_systems: systems.filter((s) => (s.activeSessions ?? 0) > 0).length,
     total_systems: systems.length,
     highest: ranking[0] ?? null,
     scoped,
@@ -142,8 +154,11 @@ export async function decorateSystems(allowed: Allowed) {
       created_at: s.createdAt.toISOString(),
       status: isOnline(s.lastSeenAt, now) ? ("online" as const) : ("offline" as const),
       // Graded liveness alongside the binary flag: "offline" cannot tell a
-      // sleeping laptop from an agent that died when its terminal closed.
-      ...deriveAgentHealth(s.lastSeenAt, now),
+      // sleeping laptop from an agent that died mid-session, nor either of
+      // those from a machine whose agent stopped because nobody is working.
+      // The reported state is what separates the last case from the others.
+      ...deriveAgentHealth(s.lastSeenAt, now, s.agentStatus),
+      active_sessions: s.activeSessions ?? 0,
       // What the agent says it is doing right now, plus the next-scan
       // countdown — the part of the row an admin watches to confirm the agent
       // is alive rather than merely enrolled.

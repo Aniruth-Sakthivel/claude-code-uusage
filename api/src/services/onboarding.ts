@@ -6,8 +6,9 @@
  *
  * Now: the user clicks "Connect this PC" and copies a single line. That line
  * fetches a generated PowerShell script which installs the agent, registers it,
- * runs the first scan and sync, and schedules scan+sync every 15 minutes. After
- * that the dashboard updates itself.
+ * runs the first scan and sync, and wires Claude Code's session hooks so the
+ * agent starts and stops with the user's sessions. After that the dashboard
+ * updates itself.
  *
  * Why a token instead of the key in the URL: the command is pasted into a
  * terminal and lands in shell history and possibly logs. The enrollment token is
@@ -327,24 +328,30 @@ function manualSetupBlock(
     "python -m meterhouse account enable",
     "python -m meterhouse sync          # the account report goes out with a sync",
     "",
-    "# 5 - keep it updating on its own. Pick ONE:",
+    "# 5 - keep it updating on its own.",
     "",
-    "#   (a) Background, survives closing this window and reboots. Runs one",
-    "#       scan+sync cycle every 15 minutes. `once` is a single command on",
-    "#       purpose: chaining scan && sync inside a task action needs nested",
-    "#       quoting that frequently registers a task which never actually runs.",
+    "#   (a) The normal way: let Claude Code start and stop the agent for you.",
+    "#       This writes three hooks into ~/.claude/settings.json (your own",
+    "#       hooks are preserved). The agent then runs only while a session is",
+    "#       open - no background process at all on an idle PC, and nothing",
+    "#       polling on a timer.",
+    "python -m meterhouse install-hooks",
+    "python -m meterhouse sessions      # what is live, and whether hooks are set",
+    "",
+    "#   (b) A daily catch-up, in case hook installation ever fails silently.",
+    "#       `once` is a single command on purpose: chaining scan && sync inside",
+    "#       a task action needs nested quoting that frequently registers a task",
+    "#       which never actually runs.",
     "$py = (Get-Command python).Source",
     "$pyw = Join-Path (Split-Path $py) 'pythonw.exe'   # no console window",
     "$exe = if (Test-Path $pyw) { $pyw } else { $py }",
     "$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse once --quiet'",
-    "$trg = New-ScheduledTaskTrigger -Once -At (Get-Date) " +
-      "-RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)",
-    "Register-ScheduledTask -TaskName 'Meterhouse Scan+Sync' -Action $act -Trigger $trg -Force",
+    "$trg = New-ScheduledTaskTrigger -Daily -At '12:30'",
+    "Register-ScheduledTask -TaskName 'Meterhouse Daily Catch-up' -Action $act -Trigger $trg -Force",
     "",
-    "#   (b) The daemon - scans every 60s and holds the real-time connection.",
-    "#       Started like this it dies with the window; the one-line installer",
-    "#       registers it as a scheduled task instead, which is what survives.",
-    "#       Useful here for watching the log output while diagnosing something:",
+    "#   (c) Run the agent by hand to watch what it does. It scans every 60s",
+    "#       while a Claude Code session is open, then exits on its own.",
+    "#       Add --always-on for a PC that cannot use hooks at all.",
     "python -m meterhouse daemon",
     "",
     "# Optional: if you would rather type 'meterhouse' than 'python -m meterhouse',",
@@ -355,6 +362,8 @@ function manualSetupBlock(
     "# --- Uninstalling this PC ---",
     "# Remove whichever scheduled tasks exist (the last two are names used by",
     "# older installers). Errors are harmless.",
+    "python -m meterhouse uninstall-hooks",
+    'schtasks /Delete /TN "Meterhouse Daily Catch-up" /F',
     'schtasks /Delete /TN "Meterhouse Agent" /F',
     'schtasks /Delete /TN "Meterhouse Scan+Sync" /F',
     'schtasks /Delete /TN "Meterhouse Agent Check" /F',
@@ -391,11 +400,11 @@ export function renderInstallScript(opts: {
   const q = pwshQuote;
 
   return `# Meterhouse agent setup - generated for ${displayName}
-# Installs the agent (pip), connects this PC, and registers two scheduled tasks
-# so reporting continues after this window is closed and after a reboot:
-#   - the daemon (scans every 60s, holds the real-time connection), started at
-#     logon and re-checked every 5 minutes in case it stopped;
-#   - a plain scan+sync every 15 minutes as a fallback.
+# Installs the agent (pip), connects this PC, and hands its lifecycle to Claude
+# Code so reporting continues after this window is closed and after a reboot:
+#   - session hooks start the agent when you open Claude Code and stop it when
+#     you finish, so an idle PC runs no agent process at all;
+#   - one daily catch-up scan+sync as a safety net.
 # Closing this window is expected and safe.
 
 $ErrorActionPreference = 'Stop'
@@ -480,27 +489,29 @@ $pyDir = Split-Path $launchFile -Parent
 $windowless = if ($py[0] -eq 'py') { Join-Path $pyDir 'pyw.exe' } else { Join-Path $pyDir 'pythonw.exe' }
 $daemonFile = if (Test-Path $windowless) { $windowless } else { $launchFile }
 $pyPrefix = if ($py.Count -gt 1) { $py[1..($py.Length-1)] } else { @() }
-$daemonArgs = $pyPrefix + @('-m', 'meterhouse', 'daemon')
 $onceArgs   = $pyPrefix + @('-m', 'meterhouse', 'once', '--quiet')
 
-# --- 6. register the background tasks ----------------------------------------
-# Two tasks, on purpose:
+# --- 6. hand the lifecycle to Claude Code ------------------------------------
+# The agent is event-driven. Claude Code's own session hooks start it when
+# someone begins working and stop it when the last session ends, so an idle PC
+# runs no agent process at all - no logon task, no 5-minute supervisor, no
+# 15-minute poll. Those three tasks existed only to answer "is anyone using
+# Claude Code?", which the hooks answer directly.
 #
-#   Meterhouse Agent      the daemon. Started at logon AND re-checked every 5
-#                         minutes, so a daemon that was killed (antivirus, a
-#                         crash, sleep/resume) is back within minutes instead of
-#                         waiting for the next logon. Relaunching while one is
-#                         already running is harmless - the daemon takes a
-#                         single-instance lock and a duplicate exits at once.
-#
-#   Meterhouse Scan+Sync  a plain scan+sync every 15 minutes. It is the safety
-#                         net for machines where the daemon cannot stay alive:
-#                         usage keeps arriving, and - because commands queued in
-#                         the dashboard are collected on the same call - the
-#                         admin's "Scan now" and config pushes still get through.
-#
-# Both run only while this user is logged on, which is all a per-user agent
-# needs, and neither requires administrator rights to register.
+# Crash recovery comes free with them: every prompt submitted re-checks that the
+# agent is alive and restarts it if not, for that session only.
+Write-Host 'Installing Claude Code session hooks...'
+$hooksOk = $true
+try {
+  & $runner @('install-hooks')
+  if ($LASTEXITCODE -ne 0) { $hooksOk = $false }
+} catch { $hooksOk = $false }
+
+# One task remains: a daily catch-up. It is the floor on data loss for a machine
+# where hook installation failed or the agent was killed mid-session. Scanning
+# is incremental and idempotent, so even a day behind it reports in full.
+# It runs only while this user is logged on, which is all a per-user agent
+# needs, and does not require administrator rights to register.
 function Register-MeterhouseTask {
   param([string]$Name, [string]$Execute, [string[]]$Arguments, [object[]]$Triggers)
 
@@ -513,77 +524,60 @@ function Register-MeterhouseTask {
     -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
 }
 
-# Old task names from previous installs - removed so an upgrade does not leave a
-# second, differently-configured agent running alongside the new one.
-foreach ($old in @('Meterhouse Daemon', 'Meterhouse Daemon Watchdog')) {
+# Task names from previous installs. These ran the agent around the clock and
+# polled every 5 and 15 minutes; leaving any of them behind would keep doing
+# exactly the work the hooks were installed to eliminate.
+foreach ($old in @('Meterhouse Agent', 'Meterhouse Agent Check', 'Meterhouse Scan+Sync',
+                   'Meterhouse Daemon', 'Meterhouse Daemon Watchdog')) {
   schtasks /Delete /TN $old /F 2>&1 | Out-Null
 }
 Remove-Item (Join-Path $InstallDir 'watchdog.ps1') -ErrorAction SilentlyContinue
 
 $tasksOk = $true
 try {
-  $logon = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"
-  # A "once, then repeat forever" trigger. RepetitionDuration has to be a long
-  # finite span; [TimeSpan]::MaxValue is rejected by the task scheduler.
-  $every5 = New-ScheduledTaskTrigger -Once -At (Get-Date) \`
-    -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
-  Register-MeterhouseTask -Name 'Meterhouse Agent' -Execute $daemonFile \`
-    -Arguments $daemonArgs -Triggers @($logon, $every5)
-
-  $every15 = New-ScheduledTaskTrigger -Once -At (Get-Date) \`
-    -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
-  Register-MeterhouseTask -Name 'Meterhouse Scan+Sync' -Execute $daemonFile \`
-    -Arguments $onceArgs -Triggers @($every15)
-
-  Write-Host 'Background tasks registered:'
-  Write-Host '  - Meterhouse Agent      (starts at logon, re-checked every 5 minutes)'
-  Write-Host '  - Meterhouse Scan+Sync  (every 15 minutes, fallback)'
+  $daily = New-ScheduledTaskTrigger -Daily -At '12:30'
+  Register-MeterhouseTask -Name 'Meterhouse Daily Catch-up' -Execute $daemonFile \`
+    -Arguments $onceArgs -Triggers @($daily)
+  Write-Host 'Background task registered:'
+  Write-Host '  - Meterhouse Daily Catch-up  (once a day, safety net only)'
 } catch {
   $tasksOk = $false
-  Write-Host ("Could not register the scheduled tasks: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+  Write-Host ("Could not register the scheduled task: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
   Write-Host 'Falling back to schtasks...' -ForegroundColor Yellow
   # Fallback for machines where the ScheduledTasks module is unavailable. The
   # action is written to a .cmd file first so the /TR value is a single path
   # with no embedded quotes to mangle.
-  $launcher = Join-Path $InstallDir 'agent.cmd'
+  $launcher = Join-Path $InstallDir 'catchup.cmd'
   Set-Content -Path $launcher -Encoding ASCII -Value @(
     '@echo off',
-    'start "" /B "' + $daemonFile + '" ' + ($daemonArgs -join ' ')
+    'start "" /B "' + $daemonFile + '" ' + ($onceArgs -join ' ')
   )
-  schtasks /Create /SC ONLOGON /TN 'Meterhouse Agent' /TR "\`"$launcher\`"" /RL LIMITED /F 2>&1 | Out-Null
-  schtasks /Create /SC MINUTE /MO 5 /TN 'Meterhouse Agent Check' /TR "\`"$launcher\`"" /RL LIMITED /F 2>&1 | Out-Null
+  schtasks /Create /SC DAILY /ST 12:30 /TN 'Meterhouse Daily Catch-up' /TR "\`"$launcher\`"" /RL LIMITED /F 2>&1 | Out-Null
   if ($LASTEXITCODE -eq 0) { $tasksOk = $true; Write-Host 'Registered via schtasks.' }
 }
 
-# --- 7. start it now and confirm it is actually alive -------------------------
-Write-Host 'Starting the Meterhouse agent in the background...'
-Start-Process -FilePath $daemonFile -ArgumentList $daemonArgs -WindowStyle Hidden
-
-Write-Host 'Waiting for the agent to report in...'
-Start-Sleep -Seconds 8
-& $runner @('health')
-
-$alive = $false
-if (Test-Path $HealthFile) {
-  try {
-    $h = Get-Content $HealthFile -Raw | ConvertFrom-Json
-    $age = ((Get-Date).ToUniversalTime() - [DateTime]::Parse($h.updated_at).ToUniversalTime()).TotalSeconds
-    if ($age -lt 120) { $alive = $true }
-  } catch {}
-}
+# --- 7. confirm the wiring, without starting anything -------------------------
+# Nothing is launched here on purpose. There is no Claude Code session open
+# right now, so a daemon started at this moment would correctly scan once and
+# exit - and an installer that waits for a health file to appear would then
+# report a false failure. What matters is whether the hooks are registered.
+& $runner @('sessions')
 
 Write-Host ''
-if ($alive) {
-  Write-Host 'Done. The agent is running in the background.' -ForegroundColor Green
-  Write-Host 'You can close this window - it keeps reporting after you close it, and restarts itself at logon.'
+if ($hooksOk) {
+  Write-Host 'Done. The agent starts with your next Claude Code session.' -ForegroundColor Green
+  Write-Host 'You can close this window. Nothing runs in the background until you use Claude Code,'
+  Write-Host 'and it stops on its own when you finish.'
 } else {
-  Write-Host 'The agent was installed but did not report health within 8 seconds.' -ForegroundColor Yellow
-  Write-Host 'Usage will still reach the dashboard via the 15-minute Scan+Sync task.'
-  Write-Host 'To see what went wrong, run this and read the output:'
-  Write-Host ('  {0} -m meterhouse daemon' -f $launchFile)
+  Write-Host 'Usage was synced, but the Claude Code hooks could not be installed.' -ForegroundColor Yellow
+  Write-Host 'The daily catch-up task will still report usage once a day.'
+  Write-Host 'To retry, or to see why it failed, run:'
+  Write-Host ('  {0} -m meterhouse install-hooks' -f $launchFile)
+  Write-Host 'If this PC cannot use hooks at all, run the agent in always-on mode instead:'
+  Write-Host ('  {0} -m meterhouse daemon --always-on' -f $launchFile)
 }
 if (-not $tasksOk) {
-  Write-Host 'No scheduled task could be registered - the agent will NOT restart after a reboot.' -ForegroundColor Yellow
+  Write-Host 'No scheduled task could be registered - there is no daily catch-up on this PC.' -ForegroundColor Yellow
 }
 Write-Host ("Open {0} to see this PC." -f $Server)
 Write-Host ''

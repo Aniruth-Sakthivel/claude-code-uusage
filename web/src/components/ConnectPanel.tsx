@@ -11,8 +11,15 @@
  *
  * Note on scope: a browser cannot read `~/.claude/projects/*.jsonl` — sandboxing
  * forbids it — so no button here can scan a PC directly. What this does deliver
- * is one command, after which the agent scans and syncs every 15 minutes on its
- * own.
+ * is one line to paste, after which the agent starts and stops with the user's
+ * Claude Code sessions on its own.
+ *
+ * That one line is the whole point of this screen. The server already generates
+ * it (`install_command`), but this panel used to render only a seven-step
+ * manual sequence and never showed it — so every user did by hand what a single
+ * paste would have done, and the steps themselves described a scheduled task
+ * the agent no longer installs. The manual path is still here, corrected, but
+ * it is now the fallback it was always meant to be.
  */
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -24,9 +31,11 @@ import { fleetKeys } from "../api/queryKeys";
 import type { ConnectResponse, SystemRow } from "../api/types";
 import {
   AGENT_INSTALL,
-  BACKGROUND_TASK_COMMAND,
   DAEMON_COMMAND,
+  DAILY_CATCHUP_COMMAND,
+  INSTALL_HOOKS_COMMAND,
   SCAN_COMMAND,
+  SESSIONS_COMMAND,
   SYNC_COMMAND,
   accountReportCommands,
   registerCommand,
@@ -151,6 +160,14 @@ export function ConnectPanel({
   }, [result]);
 
   if (result) {
+    // Shown as a wall-clock time rather than a countdown: the user is about to
+    // walk to another machine, and "expires at 14:32" survives that trip in a
+    // way that "expires in 15 minutes" does not.
+    const expiresAt = new Date(result.expires_at).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
     return (
       <Card>
         <CardHead
@@ -172,8 +189,8 @@ export function ConnectPanel({
         <Alert tone="warn" title="Use PowerShell, not cmd.exe">
           Press <kbd className="rounded border border-line px-1">Win</kbd> +{" "}
           <kbd className="rounded border border-line px-1">X</kbd> and choose Terminal or
-          PowerShell on the PC you want to track. cmd.exe does not strip the quotes in
-          step 3, so they end up inside your key and the connection fails. Needs{" "}
+          PowerShell on the PC you want to track. cmd.exe does not strip the quotes, so
+          they end up inside your key and the connection fails. Needs{" "}
           <a
             href="https://python.org/downloads"
             className="font-semibold text-accent underline underline-offset-2"
@@ -183,62 +200,113 @@ export function ConnectPanel({
           .
         </Alert>
 
-        <ol className="mt-4 flex flex-col gap-5">
-          <Step n={1} title="Install the agent" code={AGENT_INSTALL}>
-            Run once per PC. Commands use{" "}
-            <code className="rounded bg-surface-2 px-1">python -m</code> because pip puts
-            the <code className="rounded bg-surface-2 px-1">meterhouse</code> shortcut in a
-            folder Windows leaves off PATH.
-          </Step>
-
-          <Step
-            n={2}
-            title="Connect this PC"
-            code={registerCommand(serverUrl(), result.api_key, result.display_name)}
-          >
-            Your API key is in this line and does not expire — keep it somewhere safe.
-          </Step>
-
-          <Step n={3} title="Read local usage" code={SCAN_COMMAND}>
-            Reads token counts from <code className="rounded bg-surface-2 px-1">~/.claude</code>{" "}
-            into a local database. Prompts, responses, and source code are never read.
-          </Step>
-
-          <Step n={4} title="Send it to the dashboard" code={SYNC_COMMAND}>
-            This is the one that makes data appear. Refresh the dashboard after it prints{" "}
-            <code className="rounded bg-surface-2 px-1">Sync complete</code>.
-          </Step>
-
-          <Step n={5} title="Keep it syncing by itself" code={BACKGROUND_TASK_COMMAND}>
-            Scans and syncs every 15 minutes in the background — no window to leave open,
-            survives logout and reboot. The Systems page shows{" "}
-            <span className="font-semibold text-good">Working</span> while it is reporting,
-            and <span className="font-semibold text-warn">Stuck</span> if it stops.
-          </Step>
-
-          <Step n={6} title="Report Claude account usage" optional code={accountReportCommands()}>
-            Adds this machine to the Claude accounts page with plan and rate-limit usage.{" "}
-            <code className="rounded bg-surface-2 px-1">show</code> prints exactly what
-            would be sent without sending it; the sync transmits it.
-          </Step>
-
-          <Step n={7} title="Run in the foreground instead" optional code={DAEMON_COMMAND}>
-            Scans every 60 seconds and prints as it goes — useful for watching a sync
-            happen, or for reporting Claude account usage on agent 0.1.2 and older, where
-            only the daemon sends it. It <span className="font-semibold">stops when you
-            close the terminal</span>, so use step 5 to keep a PC reporting.
-          </Step>
-        </ol>
+        {/*
+          The whole setup, in one paste. It installs the agent, connects this PC,
+          runs the first scan and sync, and registers the Claude Code session
+          hooks. Nothing below it is required.
+        */}
+        <div className="mt-4">
+          <div className="mb-1 flex flex-wrap items-baseline gap-2">
+            <span className="text-base font-medium">Paste this into PowerShell</span>
+            <span className="text-sm text-muted">on the PC you want to track</span>
+          </div>
+          <CodeBlock code={result.install_command} shell />
+          <p className="mt-2 text-sm text-muted">
+            Installs the agent, connects this PC, sends the first scan, and sets it to
+            start and stop with your Claude Code sessions. Then you are done — this page
+            updates by itself once it reports in.
+          </p>
+          {/*
+            This line carries a single-use token that expires, which is easy to
+            walk into now that it is the main path: paste it tomorrow and it
+            fails with nothing to explain why. The API key inside the manual
+            steps does not expire, so that is the honest fallback to point at.
+          */}
+          <p className="mt-1 text-sm text-muted">
+            Works once, until <span className="font-medium text-ink-2">{expiresAt}</span>.
+            After that, press “Connect another PC” for a fresh line — or use the steps
+            below, which keep working because your API key does not expire.
+          </p>
+        </div>
 
         <details className="mt-5 rounded-xl border border-line bg-surface-2 p-3">
           <summary className="cursor-pointer text-sm font-semibold">
-            Copy everything as one block, or just the key
+            Prefer to run the steps yourself?
           </summary>
-          <div className="mt-3 flex flex-col gap-3">
+
+          <ol className="mt-4 flex flex-col gap-5">
+            <Step n={1} title="Install the agent" code={AGENT_INSTALL}>
+              Run once per PC. Commands use{" "}
+              <code className="rounded bg-surface-2 px-1">python -m</code> because pip puts
+              the <code className="rounded bg-surface-2 px-1">meterhouse</code> shortcut in
+              a folder Windows leaves off PATH.
+            </Step>
+
+            <Step
+              n={2}
+              title="Connect this PC"
+              code={registerCommand(serverUrl(), result.api_key, result.display_name)}
+            >
+              Your API key is in this line and does not expire — keep it somewhere safe.
+            </Step>
+
+            <Step n={3} title="Read local usage" code={SCAN_COMMAND}>
+              Reads token counts from{" "}
+              <code className="rounded bg-surface-2 px-1">~/.claude</code> into a local
+              database. Prompts, responses, and source code are never read.
+            </Step>
+
+            <Step n={4} title="Send it to the dashboard" code={SYNC_COMMAND}>
+              This is the one that makes data appear. Refresh the dashboard after it prints{" "}
+              <code className="rounded bg-surface-2 px-1">Sync complete</code>.
+            </Step>
+
+            <Step n={5} title="Let Claude Code start and stop it" code={INSTALL_HOOKS_COMMAND}>
+              The agent then runs only while you have a Claude Code session open — nothing
+              in the background on an idle PC, and no window to leave open. The Systems
+              page shows <span className="font-semibold text-good">Working</span> during a
+              session and <span className="font-semibold">Idle</span> between them; Idle is
+              healthy.
+            </Step>
+
+            <Step n={6} title="Add a daily safety net" optional code={DAILY_CATCHUP_COMMAND}>
+              One catch-up scan a day, in case the hooks ever fail to install. Scanning
+              never double-counts, so this costs nothing but a moment.
+            </Step>
+
+            <Step
+              n={7}
+              title="Report Claude account usage"
+              optional
+              code={accountReportCommands()}
+            >
+              Adds this machine to the Claude accounts page with plan and rate-limit usage.{" "}
+              <code className="rounded bg-surface-2 px-1">show</code> prints exactly what
+              would be sent without sending it; the sync transmits it.
+            </Step>
+
+            <Step n={8} title="Watch it run" optional code={DAEMON_COMMAND}>
+              Prints as it goes, which is useful for diagnosing a PC that is not reporting.
+              It scans while a session is open and exits by itself when the last one ends,
+              so it is not a way to keep a machine connected — step 5 is.
+            </Step>
+          </ol>
+
+          <div className="mt-5 flex flex-col gap-3 border-t border-line pt-4">
             <CodeBlock code={result.api_key} label="API key" />
-            <CodeBlock code={result.manual_commands} label="Full setup, including uninstall" shell />
+            <CodeBlock
+              code={result.manual_commands}
+              label="Full setup, including uninstall"
+              shell
+            />
           </div>
         </details>
+
+        <p className="mt-4 text-sm text-muted">
+          Not reporting? Run <code className="rounded bg-surface-2 px-1">{SESSIONS_COMMAND}</code>{" "}
+          on that PC — it says whether the hooks are installed and whether the agent is
+          running.
+        </p>
       </Card>
     );
   }
@@ -253,7 +321,7 @@ export function ConnectPanel({
     >
       <CardHead
         title="Connect this PC"
-        hint="One command. Then it updates itself."
+        hint="One line to paste. Then it looks after itself."
       />
 
       <Field label="What should we call this PC?" required>

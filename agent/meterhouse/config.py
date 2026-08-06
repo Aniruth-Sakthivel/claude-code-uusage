@@ -19,6 +19,21 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 
+#: Fields the dashboard is allowed to change remotely, via a `set_config`
+#: command. An allowlist rather than "any attribute that exists": the config
+#: also holds things a remote operator has no business setting on someone's
+#: machine (`always_on`, `log_file`, the account/title privacy switches), and
+#: `hasattr` would happily accept every one of them.
+CONFIG_PATCH_ALLOWLIST = frozenset({
+    "scan_interval_seconds",
+    "session_idle_timeout_seconds",
+    "shutdown_grace_seconds",
+    "ws_enabled",
+    "session_titles_enabled",
+    "account_reporting_enabled",
+})
+
+
 def default_runtime_config_path() -> Path:
     env = os.environ.get("METERHOUSE_RUNTIME_CONFIG")
     if env:
@@ -30,6 +45,24 @@ def default_runtime_config_path() -> Path:
 class AgentConfig:
     # Scanning
     scan_interval_seconds: int = 60
+    # Session lifecycle. The agent runs only while a Claude Code session is
+    # open, so these govern when it starts and — more importantly — when it is
+    # allowed to stop.
+    #
+    # `session_idle_timeout_seconds` is the safety net for sessions that never
+    # fire SessionEnd (Claude Code killed, crashed, or the machine slept). It
+    # is measured against transcript writes as well as hook events, so a long
+    # agent turn with no user prompt still counts as active — see
+    # sessions.SessionRecord.age_seconds. Too low and the daemon quits out from
+    # under someone who is still working; five minutes is comfortably longer
+    # than any gap within a live session.
+    session_idle_timeout_seconds: int = 300
+    # Breathing room between "the last session ended" and actually exiting, so
+    # closing one window and opening another does not churn the process.
+    shutdown_grace_seconds: int = 20
+    # Opt back in to the old always-running behaviour, for machines that cannot
+    # register hooks at all (managed settings.json, locked-down policy).
+    always_on: bool = False
     # Real-time push (optional — the agent works fully without it, falling
     # back to the existing REST `sync` path on its own schedule).
     ws_enabled: bool = False
@@ -62,6 +95,12 @@ class AgentConfig:
     # Observability
     log_level: str = "INFO"
     log_json: bool = True
+    # Where the daemon's log goes. It is started detached and windowless by a
+    # hook now, so stderr goes nowhere — without a file there is no record at
+    # all of what a background agent did. None means the default path below.
+    log_file: str | None = None
+    log_file_max_bytes: int = 1_000_000
+    log_file_backups: int = 2
 
     @staticmethod
     def _env_overrides() -> dict:
@@ -85,8 +124,12 @@ class AgentConfig:
                 "session_titles_enabled",
                 lambda v: v.lower() in ("1", "true", "yes"),
             ),
+            "METERHOUSE_SESSION_IDLE_TIMEOUT": ("session_idle_timeout_seconds", int),
+            "METERHOUSE_SHUTDOWN_GRACE": ("shutdown_grace_seconds", int),
+            "METERHOUSE_ALWAYS_ON": ("always_on", lambda v: v.lower() in ("1", "true", "yes")),
             "METERHOUSE_LOG_LEVEL": ("log_level", str),
             "METERHOUSE_LOG_JSON": ("log_json", lambda v: v.lower() in ("1", "true", "yes")),
+            "METERHOUSE_LOG_FILE": ("log_file", str),
         }
         out = {}
         for env_name, (field_name, caster) in mapping.items():
@@ -129,6 +172,12 @@ class AgentConfig:
         hostile config files, not against legitimate tuning.
         """
         self.scan_interval_seconds = max(5, min(self.scan_interval_seconds, 86_400))
+        # Floor of 30s: anything shorter and an ordinary pause for thought
+        # would look like an abandoned session and stop the agent mid-work.
+        self.session_idle_timeout_seconds = max(30, min(self.session_idle_timeout_seconds, 86_400))
+        self.shutdown_grace_seconds = max(0, min(self.shutdown_grace_seconds, 3_600))
+        self.log_file_max_bytes = max(10_000, min(self.log_file_max_bytes, 100_000_000))
+        self.log_file_backups = max(0, min(self.log_file_backups, 20))
         self.retry_max_attempts = max(1, min(self.retry_max_attempts, 50))
         self.retry_backoff_base_seconds = max(0.1, min(self.retry_backoff_base_seconds, 300))
         self.retry_backoff_max_seconds = max(
@@ -139,3 +188,30 @@ class AgentConfig:
         if self.log_level.upper() not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
             self.log_level = "INFO"
         return self
+
+    def resolved_log_file(self) -> Path:
+        """The daemon's log path, defaulted alongside the rest of its state."""
+        if self.log_file:
+            return Path(self.log_file)
+        return Path.home() / ".claude" / "meterhouse" / "agent.log"
+
+    def apply_patch(self, payload: dict) -> list[str]:
+        """Apply an allowlisted `set_config` push and persist. Returns the
+        field names actually applied.
+
+        Shared by both paths that can receive one — the daemon's command
+        handler and the one-shot CLI's. They used to implement this
+        separately, and the CLI's copy accepted any existing attribute and
+        skipped validation, so the same dashboard action had different reach
+        and different bounds depending on which one happened to pick it up.
+        """
+        applied = []
+        for key, value in (payload or {}).items():
+            if key not in CONFIG_PATCH_ALLOWLIST:
+                continue
+            setattr(self, key, value)
+            applied.append(key)
+        if applied:
+            self.validated()
+            self.save()
+        return applied

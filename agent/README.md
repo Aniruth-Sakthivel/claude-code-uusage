@@ -159,64 +159,92 @@ responses, or source code — only token counts and metadata.
 
 ---
 
-## 6. Running in the background (Windows Task Scheduler)
+## 6. Running in the background (event-driven)
 
-The "Connect PC" flow (§7) registers two tasks. Nothing has to stay open, and
-closing the terminal you installed from does not stop anything:
+**The agent runs only while you have a Claude Code session open.** There is no
+service, no logon task, and no process at all on an idle machine. Claude Code's
+own session hooks start it and stop it:
 
-| Task | What it does |
+```powershell
+python -m meterhouse install-hooks
+```
+
+That writes three entries into `~/.claude/settings.json` (your existing hooks
+are preserved, and `uninstall-hooks` removes exactly these three):
+
+| Hook | What it does |
 | --- | --- |
-| **Meterhouse Agent** | The daemon: scans on its interval, scans immediately when you start using Claude, holds the real-time connection. Starts at logon and is re-checked every 5 minutes, so a daemon that was killed comes back on its own. |
-| **Meterhouse Scan+Sync** | `meterhouse once` every 15 minutes. The fallback for machines where the daemon cannot stay running — usage keeps arriving, and commands queued from the dashboard still get collected. |
+| `SessionStart` | Records the session and starts the agent if it isn't already running. |
+| `SessionEnd` | Removes the session. The last one out lets the agent shut down. |
+| `UserPromptSubmit` | Refreshes liveness, and restarts the agent if it had crashed. |
 
-Re-launching the daemon while one is already running is safe: it takes a
+All three are registered `async`, so they never make you wait, and they never
+print anything — a hook that wrote to stdout would inject text into Claude's
+context on every session.
+
+The "Connect PC" flow (§7) does this for you and adds one **Meterhouse Daily
+Catch-up** task: a single `meterhouse once` per day, purely as a floor on data
+loss if hooks ever fail to install. Scanning is incremental and idempotent, so
+even a machine a day behind reports its full history.
+
+### The lifecycle
+
+```
+open Claude Code  ->  SessionStart hook  ->  agent starts
+                      scans every 60s, and instantly whenever a transcript grows
+close the last    ->  SessionEnd hook    ->  grace period
+session               final scan + sync  ->  reports "stopped"  ->  process exits
+```
+
+Within a session the scan interval is a floor, not a fixed cadence: the agent
+watches `~/.claude/projects` every few seconds and scans the moment a transcript
+is written, so work shows up on the dashboard in seconds. The final scan on
+shutdown is what guarantees the last turn of a session — usually the largest —
+is never left behind.
+
+Claude Code that is killed outright never fires `SessionEnd`. The agent covers
+that with an idle timeout (`session_idle_timeout_seconds`, default 300)
+measured against transcript writes as well as hook events, so a long agent turn
+with no prompt still counts as active.
+
+Several Claude Code windows share one agent, and each OS user on a shared
+machine gets their own — everything lives under `~/.claude/meterhouse/`.
+Launching the agent while one is already running is safe: it takes a
 single-instance lock (`~/.claude/meterhouse/daemon.lock`) and a duplicate exits
-immediately.
+immediately, which is what lets every hook simply try.
 
-### Scanning starts when you do
-
-The scan interval is a floor, not a fixed cadence. While waiting it out the
-daemon checks `~/.claude/projects` every few seconds, and the moment a
-transcript is written — that is, the moment you start working in Claude Code —
-it scans. Starting a session just after a tick therefore shows up on the
-dashboard in seconds rather than a full interval later.
-
-The daemon also reports each step to the dashboard as it happens (`scanning` →
-`scanned` → `syncing` → `idle`), which is what the Systems page shows as a live
-badge and next-scan countdown. `meterhouse health` reports the same state
-locally; its `updated_at` is refreshed every 30 seconds regardless of the scan
-interval, so a fresh timestamp always means a live process.
-
-To set one up by hand, schedule `meterhouse once` — a single process that
-scans, syncs, and runs any queued dashboard commands:
+### Checking on it
 
 ```powershell
-$py  = (Get-Command python).Source
-$pyw = Join-Path (Split-Path $py) 'pythonw.exe'   # no console window
-$exe = if (Test-Path $pyw) { $pyw } else { $py }
-$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse once --quiet'
-$trg = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
-Register-ScheduledTask -TaskName 'Meterhouse Scan+Sync' -Action $act -Trigger $trg -Force
+python -m meterhouse sessions   # live sessions, hook state, is the agent running
+python -m meterhouse health     # last scan, active sessions, clean-stop time
 ```
 
-> Do not chain `scan && sync` in a task action. `schtasks /TR` does not go
-> through `cmd.exe`, and wrapping it in `cmd /c "…"` needs nested quoting that
-> frequently registers a task which never actually runs — a PC that silently
-> stops reporting. `once` exists so there is nothing to chain.
+The agent reports each step to the dashboard as it happens (`scanning` →
+`scanned` → `syncing` → `idle` → `stopped`). A machine showing **Idle** on the
+Systems page has stopped on purpose; that is the normal resting state, not a
+fault. Its log is at `~/.claude/meterhouse/agent.log` (rotating) — the agent
+runs windowless, so this is where its output goes.
 
-### Stop the agent from scanning
+### Turning it off
 
 ```powershell
-schtasks /Delete /TN "Meterhouse Agent" /F
-schtasks /Delete /TN "Meterhouse Scan+Sync" /F
+python -m meterhouse uninstall-hooks
+schtasks /Delete /TN "Meterhouse Daily Catch-up" /F
 ```
 
-To pause instead (keeps run history, easy to re-enable):
+### Machines that cannot use hooks
+
+Where `~/.claude/settings.json` is locked down by policy, run the old
+always-running behaviour explicitly:
 
 ```powershell
-schtasks /Change /TN "Meterhouse Agent" /DISABLE
-schtasks /Change /TN "Meterhouse Agent" /ENABLE   # resume later
+python -m meterhouse daemon --always-on
 ```
+
+Equivalent config: `always_on: true` in `runtime.json`, or
+`METERHOUSE_ALWAYS_ON=true`. This never exits on its own, so it needs a logon
+scheduled task the way earlier versions did.
 
 ---
 
@@ -282,7 +310,10 @@ python -m meterhouse identity   [--display-name NAME] [--set-display-name NAME]
 python -m meterhouse register   --server URL --api-key KEY [--display-name NAME]
 python -m meterhouse sync       [--quiet]
 python -m meterhouse once       [--quiet]   # scan + sync + run queued commands
-python -m meterhouse daemon     [--display-name NAME]
+python -m meterhouse install-hooks          # start/stop with your Claude Code sessions
+python -m meterhouse uninstall-hooks
+python -m meterhouse sessions               # live sessions + hook/agent state
+python -m meterhouse daemon     [--display-name NAME] [--always-on]
 python -m meterhouse health
 python -m meterhouse heartbeat
 python -m meterhouse account   [show | enable | disable]

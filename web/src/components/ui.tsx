@@ -24,6 +24,8 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 
+import type { AgentHealth } from "../api/types";
+
 // ── layout ────────────────────────────────────────────────────────────────────
 const cardClass = "rounded-2xl border border-line bg-surface p-5 shadow-[var(--shadow)]";
 
@@ -189,11 +191,24 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
  * after closing a window — is it still sending? — and `reason` says why in
  * plain language rather than leaving the dot to be interpreted.
  */
-const HEALTH_PRESENTATION: Record<
-  string,
-  { label: string; tone: string; pulse?: boolean }
-> = {
+interface HealthPresentation {
+  label: string;
+  tone: string;
+  pulse?: boolean;
+}
+
+/**
+ * Keyed by `AgentHealth` rather than `string`, so adding a state to the union
+ * fails the build here instead of silently falling through to the `dead`
+ * entry — which would paint a healthy machine red and label it "Not running".
+ */
+const HEALTH_PRESENTATION: Record<AgentHealth, HealthPresentation> = {
   healthy: { label: "Working", tone: "text-good", pulse: true },
+  // Neutral on purpose. The agent runs only while a Claude Code session is
+  // open, so a machine reading "Idle" is behaving exactly as designed — most
+  // of the fleet looks like this overnight, and colouring it as a fault would
+  // make the one genuinely broken PC impossible to spot.
+  dormant: { label: "Idle", tone: "text-ink-2" },
   late: { label: "Late", tone: "text-warn" },
   stalled: { label: "Stuck", tone: "text-warn" },
   dead: { label: "Not running", tone: "text-critical" },
@@ -214,7 +229,14 @@ export function StatusPill({
   // Prefer the graded value; fall back to the binary flag so any caller that
   // has not been updated still renders something correct.
   const key = health ?? (neverSynced ? "never" : status === "online" ? "healthy" : "dead");
-  const p = HEALTH_PRESENTATION[key] ?? HEALTH_PRESENTATION.dead!;
+  // A value the compiler cannot vouch for — an older dashboard talking to a
+  // newer server — renders as unknown, not as "Not running". Guessing "broken"
+  // about a machine we simply have no vocabulary for sends people to fix a PC
+  // that is fine.
+  const p: HealthPresentation = HEALTH_PRESENTATION[key as AgentHealth] ?? {
+    label: "Unknown",
+    tone: "text-ink-2",
+  };
 
   return (
     <span

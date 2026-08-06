@@ -80,6 +80,9 @@ export async function usageRoutes(app: FastifyInstance) {
     if (body.scan_interval_seconds != null) {
       patch.scanIntervalSeconds = body.scan_interval_seconds;
     }
+    if (body.active_sessions != null) {
+      patch.activeSessions = body.active_sessions;
+    }
     if (body.last_scan_at) patch.lastScanAt = new Date(body.last_scan_at);
     if (body.last_scan_duration_ms != null) {
       patch.lastScanDurationMs = Math.round(body.last_scan_duration_ms);

@@ -101,17 +101,25 @@ class SyncClient:
     def report_status(self, state: str, detail: str = "", *,
                       scan_interval_seconds: int | None = None,
                       last_scan_at: str | None = None,
-                      last_scan_duration_ms: float | None = None) -> dict:
+                      last_scan_duration_ms: float | None = None,
+                      active_sessions: int | None = None) -> dict:
         """Tell the dashboard what this agent is doing right now.
 
         Sent at each step of a cycle (scanning -> scanned -> syncing -> idle)
         so an admin can watch a machine work instead of inferring it from a
         "last seen" timestamp that looks identical whether the agent is
         scanning or wedged.
+
+        `stopped` is the terminal state: the agent finished its work and exited
+        because nobody is using Claude Code. Since the agent only runs during a
+        session, that report is what stops an idle machine from decaying into
+        looking stalled and then dead.
         """
         payload: dict = {"state": state, "detail": detail[:255]}
         if scan_interval_seconds is not None:
             payload["scan_interval_seconds"] = scan_interval_seconds
+        if active_sessions is not None:
+            payload["active_sessions"] = active_sessions
         if last_scan_at is not None:
             payload["last_scan_at"] = last_scan_at
         if last_scan_duration_ms is not None:

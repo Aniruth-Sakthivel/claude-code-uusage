@@ -74,9 +74,13 @@ export function Overview() {
     { lbl: "This month", val: s ? fmtTokens(s.month_tokens) : "—", sub: "month to date" },
     { lbl: "Total", val: s ? fmtTokens(s.total_tokens) : "—", sub: "all time" },
     {
-      lbl: "Active PCs",
-      val: s ? `${s.active_systems} / ${s.total_systems}` : "—",
-      sub: "online now",
+      // Not "online now". The agent runs only while a Claude Code session is
+      // open, so most of the fleet is legitimately stopped at any moment —
+      // labelling that as offline reads as an outage rather than a quiet
+      // Tuesday evening. This says what the number actually measures.
+      lbl: "In session",
+      val: s ? `${s.in_session_systems} / ${s.total_systems}` : "—",
+      sub: "using Claude Code now",
     },
     {
       lbl: "Highest consumer",
@@ -222,8 +226,8 @@ export function Overview() {
                       <span className="font-medium text-ink">{s?.total_systems ?? 0}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span>Active now</span>
-                      <span className="font-medium text-ink">{s?.active_systems ?? 0}</span>
+                      <span>In session now</span>
+                      <span className="font-medium text-ink">{s?.in_session_systems ?? 0}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span>Tracked this month</span>

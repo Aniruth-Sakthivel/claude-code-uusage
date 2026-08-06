@@ -54,3 +54,38 @@ def test_validated_clamps_out_of_range_values():
     assert cfg.scan_interval_seconds == 5
     assert cfg.retry_max_attempts == 50
     assert cfg.log_level == "INFO"
+
+
+# ── session lifecycle knobs ───────────────────────────────────────────────────
+
+
+def test_session_lifecycle_defaults(tmp_path):
+    cfg = AgentConfig.load(tmp_path / "missing.json")
+    assert cfg.session_idle_timeout_seconds == 300
+    assert cfg.shutdown_grace_seconds == 20
+    assert cfg.always_on is False
+
+
+def test_session_lifecycle_env_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("METERHOUSE_SESSION_IDLE_TIMEOUT", "120")
+    monkeypatch.setenv("METERHOUSE_SHUTDOWN_GRACE", "5")
+    monkeypatch.setenv("METERHOUSE_ALWAYS_ON", "true")
+    cfg = AgentConfig.load(tmp_path / "missing.json")
+    assert cfg.session_idle_timeout_seconds == 120
+    assert cfg.shutdown_grace_seconds == 5
+    assert cfg.always_on is True
+
+
+def test_idle_timeout_has_a_floor():
+    """Too short and an ordinary pause for thought would look like an
+    abandoned session, stopping the agent while someone is still working."""
+    cfg = AgentConfig(session_idle_timeout_seconds=1).validated()
+    assert cfg.session_idle_timeout_seconds == 30
+
+
+def test_resolved_log_file_defaults_alongside_the_other_state(tmp_path, monkeypatch):
+    cfg = AgentConfig()
+    assert cfg.resolved_log_file().name == "agent.log"
+
+    monkeypatch.setenv("METERHOUSE_LOG_FILE", str(tmp_path / "custom.log"))
+    assert AgentConfig.load(tmp_path / "missing.json").resolved_log_file().name == "custom.log"

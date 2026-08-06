@@ -41,6 +41,13 @@ class HealthState:
     ws_last_disconnect_reason: str | None = None
     ws_reconnect_attempts: int = 0
     offline_queue_depth: int = 0
+    #: Claude Code sessions live when the daemon last looked. The daemon exists
+    #: only while this is non-zero, so it doubles as the reason it is running.
+    active_sessions: int = 0
+    #: Set when the daemon exited cleanly. A file with `stopped_at` set is a
+    #: healthy agent that finished, not a dead one — the distinction the whole
+    #: event-driven model depends on, since silence is now the normal state.
+    stopped_at: str | None = None
     pid: int = field(default_factory=os.getpid)
 
     def touch(self) -> None:
@@ -49,6 +56,12 @@ class HealthState:
         The daemon calls this on a short fixed timer so `updated_at` reflects
         liveness rather than scan cadence — see daemon.HEALTH_HEARTBEAT_SECONDS.
         """
+        self.updated_at = _now()
+
+    def record_stopped(self) -> None:
+        """Mark a clean exit, so a later reader can tell finished from died."""
+        self.stopped_at = _now()
+        self.active_sessions = 0
         self.updated_at = _now()
 
     def record_scan(self, duration_ms: float, error: str | None = None) -> None:

@@ -8,22 +8,36 @@
  * decommissioned last month.
  *
  * So liveness is graded by how overdue the agent is, against the slowest
- * supported cadence — the 15-minute scheduled scan+sync. The daemon checks in
- * far more often, so these bounds are safe for both.
+ * supported cadence — the daily catch-up task. The agent checks in far more
+ * often while a session is open, so these bounds are safe for both.
  *
  *   never   never checked in at all — set up, but not yet running
+ *   dormant finished cleanly and exited; nobody is using Claude Code
  *   healthy heard from within one expected cycle
  *   late    missed a cycle; usually a sleeping laptop or a slow sync
  *   stalled hours of silence while it was recently active — treat as stuck
  *   dead    no contact for over a day
+ *
+ * `dormant` is the one that makes the event-driven agent legible. The agent
+ * runs only while a Claude Code session is open and reports `stopped` on its
+ * way out, so on a normal machine silence is the *resting* state — most of
+ * every night and weekend. Grading that as stalled and then dead would fire an
+ * alarm on every well-behaved PC in the fleet. A machine is only judged by
+ * elapsed silence when it never said it was stopping.
  */
 
-export type AgentHealth = "never" | "healthy" | "late" | "stalled" | "dead";
+export type AgentHealth = "never" | "dormant" | "healthy" | "late" | "stalled" | "dead";
+
+/** The terminal state an agent reports as it exits cleanly. */
+export const STOPPED_STATE = "stopped";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-/** The scheduled task runs every 15 minutes; allow a cycle plus slack. */
+/**
+ * An agent mid-session reports several times a minute; these bounds only judge
+ * one that went quiet *without* saying it stopped, so they stay generous.
+ */
 export const HEALTHY_WITHIN_MS = 20 * MINUTE;
 export const LATE_WITHIN_MS = 2 * HOUR;
 export const STALLED_WITHIN_MS = 24 * HOUR;
@@ -39,7 +53,22 @@ export interface AgentHealthView {
 export function deriveAgentHealth(
   lastSeenAt: Date | string | null,
   now: Date = new Date(),
+  agentStatus: string | null = null,
 ): AgentHealthView {
+  // Checked before the staleness ladder, and deliberately not time-bounded: an
+  // agent that reported `stopped` is not overdue for anything. It will report
+  // again when someone next opens Claude Code, which may be Monday.
+  if (lastSeenAt && agentStatus === STOPPED_STATE) {
+    const seen = lastSeenAt instanceof Date ? lastSeenAt : new Date(lastSeenAt);
+    if (!Number.isNaN(seen.getTime())) {
+      return {
+        health: "dormant",
+        silent_for_ms: Math.max(0, now.getTime() - seen.getTime()),
+        reason: "Idle — no Claude Code session open. Starts again on its own.",
+      };
+    }
+  }
+
   if (!lastSeenAt) {
     return {
       health: "never",
@@ -71,7 +100,7 @@ export function deriveAgentHealth(
       health: "stalled",
       silent_for_ms: silent,
       reason:
-        "Silent for hours. The agent may have stopped — a foreground daemon ends when its terminal closes.",
+        "Silent for hours without reporting that it stopped. The agent may have been killed mid-session.",
     };
   }
   return {

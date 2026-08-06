@@ -94,6 +94,14 @@ export const systems = pgTable(
     agentStatus: varchar("agent_status", { length: 16 }).notNull().default(""),
     agentStatusAt: timestamp("agent_status_at", { withTimezone: true }),
     agentStatusDetail: varchar("agent_status_detail", { length: 255 }).notNull().default(""),
+    /**
+     * Claude Code sessions open on that machine when the agent last reported.
+     *
+     * The agent exists only while this is non-zero, so it is the direct answer
+     * to "why is this machine quiet?" — zero sessions means deliberately idle,
+     * not broken.
+     */
+    activeSessions: integer("active_sessions").notNull().default(0),
     /** The agent's own scan cadence — what the next-scan countdown counts down to. */
     scanIntervalSeconds: integer("scan_interval_seconds"),
     lastScanAt: timestamp("last_scan_at", { withTimezone: true }),

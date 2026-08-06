@@ -29,6 +29,57 @@ import {
 import { fmtRelative, fmtTokens } from "../lib/format";
 import { useTableControls } from "../lib/useTableControls";
 
+/**
+ * Worst first, so sorting descending puts what needs attention on top.
+ * `dormant` sits with the healthy end: an agent that stopped because nobody is
+ * using Claude Code is working correctly.
+ */
+const HEALTH_ORDER: SystemRow["health"][] = [
+  "dead",
+  "stalled",
+  "late",
+  "never",
+  "dormant",
+  "healthy",
+];
+
+/**
+ * What each status means, and — more usefully — what to do about it.
+ *
+ * The vocabulary is not self-evident any more. "Idle" reads as a problem until
+ * you know the agent is *meant* to stop between sessions, and the difference
+ * between Idle and Not running is the difference between "nothing to do" and
+ * "go fix that PC". Spelling it out on the page beats leaving it to a tooltip.
+ */
+function StatusLegend() {
+  const items: { health: SystemRow["health"]; means: string }[] = [
+    { health: "healthy", means: "In a Claude Code session and reporting." },
+    { health: "dormant", means: "Stopped because no session is open. Nothing to do." },
+    { health: "late", means: "Missed a check-in — usually asleep or offline." },
+    { health: "stalled", means: "Went quiet mid-session without stopping cleanly." },
+    { health: "dead", means: "No contact for over a day. Re-run the connect command." },
+    { health: "never", means: "Enrolled but has never reported. Finish setup on that PC." },
+  ];
+
+  return (
+    <details className="rounded-xl border border-line bg-surface-2 px-4 py-3">
+      <summary className="cursor-pointer text-sm font-semibold">
+        What do these statuses mean?
+      </summary>
+      <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+        {items.map((i) => (
+          <div key={i.health} className="flex items-baseline gap-2">
+            <dt className="shrink-0">
+              <StatusPill health={i.health} status="" />
+            </dt>
+            <dd className="text-sm text-muted">{i.means}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
 export function Systems() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -68,7 +119,11 @@ export function Systems() {
     searchText: (s) => `${s.display_name} ${s.hostname ?? ""} ${s.owner ?? ""}`,
     sorters: {
       name: (a, b) => a.display_name.localeCompare(b.display_name),
-      status: (a, b) => Number(a.status === "online") - Number(b.status === "online"),
+      // Sorted by the graded health the column actually renders, not by the
+      // binary online flag. Those disagree now: a machine that stopped
+      // cleanly is "offline" by check-in age but shows as Idle, so sorting on
+      // `status` buried healthy machines among genuinely broken ones.
+      status: (a, b) => HEALTH_ORDER.indexOf(a.health) - HEALTH_ORDER.indexOf(b.health),
       tracked: (a, b) => a.total_tokens - b.total_tokens,
       projects: (a, b) => a.projects - b.projects,
       // Never-synced machines sort as epoch 0, so they land at the bottom of
@@ -86,10 +141,15 @@ export function Systems() {
       <div>
         <Eyebrow>Fleet</Eyebrow>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Systems</h1>
-        <p className="mt-1.5 text-base text-muted">
-          Every PC reporting usage, with its live status.
+        <p className="mt-1.5 max-w-3xl text-base text-muted">
+          Every PC reporting usage, with its live status. The agent runs only while
+          someone has a Claude Code session open, so most machines sit at{" "}
+          <span className="font-medium text-ink-2">Idle</span> — that is healthy, not a
+          fault.
         </p>
       </div>
+
+      <StatusLegend />
 
       <Card>
         {q.isLoading ? (
@@ -170,6 +230,14 @@ export function Systems() {
                   </Td>
                   <Td>
                     <StatusPill status={s.status} neverSynced={s.never_synced} health={s.health} reason={s.reason} />
+                    {s.active_sessions > 0 && (
+                      // The reason the agent is running at all. Without it the
+                      // row says "Working" with nothing to say what it is
+                      // working on.
+                      <div className="text-xs text-muted">
+                        {s.active_sessions} session{s.active_sessions === 1 ? "" : "s"} open
+                      </div>
+                    )}
                   </Td>
                   <Td>
                     <ScanActivity scan={s} neverReported={s.never_synced} />

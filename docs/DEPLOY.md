@@ -147,11 +147,14 @@ role, including developers, so onboarding does not require an admin.
 Administrators can alternatively pre-create machines and share keys from
 **Admin → Agent API keys**.
 
-Each install schedules a Windows task (`Meterhouse Scan+Sync`) that runs every
-15 minutes. To remove it:
+Each install wires Claude Code's session hooks, so the agent runs only while a
+user has a Claude Code session open and stops when they finish — an idle PC
+runs no agent process at all. A single `Meterhouse Daily Catch-up` task is also
+registered as a safety net. To remove both:
 
 ```powershell
-schtasks /Delete /TN "Meterhouse Scan+Sync" /F
+python -m meterhouse uninstall-hooks
+schtasks /Delete /TN "Meterhouse Daily Catch-up" /F
 ```
 
 ---
@@ -163,9 +166,11 @@ schtasks /Delete /TN "Meterhouse Scan+Sync" /F
 | `health` reports `database: error` | `DATABASE_URL` wrong, or using the direct host instead of the pooler. |
 | `Tenant or user not found` | Wrong pooler region. Copy the exact URI from **Connect**. |
 | Function times out on first request | Cold start plus a slow first connection. The configured timeout is 26s; retry. |
-| A PC stops reporting when the user closes the terminal | Old installs launched the daemon as a child of that console and only re-registered it at logon. Re-run the "Connect this PC" one-liner: it now registers the **Meterhouse Agent** and **Meterhouse Scan+Sync** tasks (windowless, re-checked every 5 minutes) and removes the old *Meterhouse Daemon* / *Watchdog* tasks. |
-| "Scan now" from Agent controls does nothing | Commands are collected on the agent's next check-in, so nothing happens while no agent is running — check the Systems page's scan activity first. Both scheduled tasks collect commands, so a machine with either one picks it up within 15 minutes. |
-| Systems page shows "No report" | The agent has not reported a state in the last 10 minutes. Run `meterhouse health` on that PC: a stale `updated_at` means the daemon is not running. |
+| A PC stops reporting when the user closes the terminal | Re-run the "Connect this PC" one-liner. It installs Claude Code's session hooks, which start the agent windowless and detached from any console, and removes the old *Meterhouse Agent* / *Scan+Sync* / *Daemon* / *Watchdog* tasks. |
+| A PC shows **Idle** | Working as designed — the agent stopped because no Claude Code session is open. It restarts by itself on the next session. |
+| A PC never leaves **Idle** even while in use | The hooks are not registered. Run `meterhouse sessions` on that PC: it reports whether the hooks are installed, then `meterhouse install-hooks` to fix. Where policy locks `~/.claude/settings.json`, run `meterhouse daemon --always-on` from a logon task instead. |
+| "Scan now" from Agent controls does nothing | Commands are collected on the agent's next check-in, and the agent only runs during a session — so a queued command waits until that user next opens Claude Code, or until the daily catch-up. Check the Systems page's scan activity first. |
+| Systems page shows "No report" | The agent has not reported a state in the last 10 minutes and did not report stopping — so it was killed rather than finishing. Run `meterhouse health` on that PC; `meterhouse sessions` shows whether Claude Code is actually open. |
 | Invite emails never arrive | No SMTP configured in Supabase. Use the "set a password" option, or configure SMTP. The account still works — the default password is set regardless of whether the mail is delivered. |
 | Invite email shows no login details | The dashboard template still has Supabase's default body. Paste the template from "Invite email template" above. |
 | `unrecognized JWT kid` on user creation | Transient GoTrue error, retried automatically. Persisting means email confirmation is failing — check Supabase auth settings. |

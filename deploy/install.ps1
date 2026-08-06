@@ -95,8 +95,27 @@ Invoke-Meterhouse -FleetArgs @("scan")
 Write-Host "Syncing to dashboard..."
 Invoke-Meterhouse -FleetArgs @("sync")
 
+# The agent is event-driven: Claude Code's own session hooks start it when
+# someone begins working and stop it when they finish. This is what makes an
+# idle PC cost nothing at all - there is no agent process on it between
+# sessions, and nothing polling on a timer.
+Write-Host "Installing Claude Code session hooks..."
+Invoke-Meterhouse -FleetArgs @("install-hooks")
+
 if (-not $SkipSchedule) {
-    $taskName = "Meterhouse Scan+Sync"
+    $taskName = "Meterhouse Daily Catch-up"
+
+    # The old task ran every 15 minutes - 96 wakeups a day on a machine that
+    # might never open Claude Code. The hooks cover live reporting now, so this
+    # is only a floor on data loss for a PC where hook installation failed or
+    # the agent was killed. Scanning is incremental and idempotent, so a
+    # machine a day behind still reports its complete history.
+    foreach ($old in @("Meterhouse Scan+Sync", "Meterhouse Agent")) {
+        # Removed rather than left disabled: an upgraded machine running both
+        # the old 15-minute task and the new hooks would scan far more often
+        # than either design intends.
+        schtasks /Delete /TN $old /F 2>$null | Out-Null
+    }
 
     # `once` does scan + sync in a single process. The previous form chained
     # them with "&&", which has to be wrapped in cmd /c inside a task action;
@@ -108,7 +127,7 @@ if (-not $SkipSchedule) {
     } else {
         $pyPath = (Get-Command $py[0]).Source
         # pythonw/pyw run without a console, so the task does not flash a
-        # window in the user's face every 15 minutes.
+        # window in the user's face.
         $windowless = Join-Path (Split-Path $pyPath -Parent) $(if ($py[0] -eq "py") { "pyw.exe" } else { "pythonw.exe" })
         $execute = if (Test-Path $windowless) { $windowless } else { $pyPath }
         $prefix = if ($py.Count -gt 1) { ($py[1..($py.Length - 1)] -join " ") + " " } else { "" }
@@ -117,19 +136,21 @@ if (-not $SkipSchedule) {
 
     try {
         $action = New-ScheduledTaskAction -Execute $execute -Argument $arguments
-        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-            -RepetitionInterval (New-TimeSpan -Minutes 15) `
-            -RepetitionDuration (New-TimeSpan -Days 3650)
+        $trigger = New-ScheduledTaskTrigger -Daily -At "12:30"
+        # StartWhenAvailable matters more for a daily task than a 15-minute
+        # one: a laptop asleep at the trigger time runs it on next wake rather
+        # than skipping the day entirely.
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
             -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
             -Settings $settings -Force -ErrorAction Stop | Out-Null
-        Write-Host "Scheduled task '$taskName' - scan + sync every 15 minutes."
+        Write-Host "Scheduled task '$taskName' - a daily catch-up scan + sync."
     } catch {
         Write-Host "Could not register the scheduled task: $($_.Exception.Message)"
-        Write-Host "Usage already synced once; re-run this script or schedule 'meterhouse once' yourself."
+        Write-Host "Usage already synced once, and the session hooks still report live."
     }
 }
 
 Write-Host ""
-Write-Host "Done. Open your dashboard to see usage for '$Name'."
+Write-Host "Done. The agent now starts with your Claude Code sessions and stops when they end."
+Write-Host "Open your dashboard to see usage for '$Name'."

@@ -94,4 +94,32 @@ describe("deriveScanActivity", () => {
   it("stamps the server clock so clients can correct for skew", () => {
     expect(deriveScanActivity(base, now).server_time).toBe(now.toISOString());
   });
+
+  describe("stopped — the agent exited because no session is open", () => {
+    const stopped = { ...base, agentStatus: "stopped" };
+
+    it("is recognised and is not a scan in progress", () => {
+      const v = deriveScanActivity(stopped, now);
+      expect(v.agent_state).toBe("stopped");
+      expect(v.scanning).toBe(false);
+    });
+
+    /**
+     * Unlike an in-progress state, this one is a finished outcome. Ageing it
+     * out would erase the only evidence that an idle machine is idle by design
+     * — and it can legitimately be the last word for an entire weekend.
+     */
+    it("is still trusted long after the trust window for live states", () => {
+      const old = new Date(now.getTime() - STATE_TRUSTED_FOR_MS * 100);
+      const v = deriveScanActivity({ ...stopped, agentStatusAt: old }, now);
+      expect(v.agent_state).toBe("stopped");
+    });
+
+    /** It restarts on a session, not on a timer: a countdown would mislead. */
+    it("offers no next-scan countdown", () => {
+      expect(deriveScanActivity(stopped, now).next_scan_due_at).toBeNull();
+      // ...while a running agent still gets one.
+      expect(deriveScanActivity(base, now).next_scan_due_at).not.toBeNull();
+    });
+  });
 });
