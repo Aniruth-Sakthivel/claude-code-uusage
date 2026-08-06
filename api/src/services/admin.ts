@@ -16,6 +16,38 @@ import { badRequest, conflict, notFound } from "../core/errors.js";
 import type { Principal, Role } from "../core/rbac.js";
 import * as supabaseAdmin from "../core/supabase-admin.js";
 import * as repo from "../repositories/admin.js";
+import { deleteOrphanedAccounts } from "../repositories/accounts.js";
+
+import type { DbTx } from "../db/client.js";
+
+/**
+ * Drop any Claude account the caller's delete just orphaned, and say so in the
+ * audit log.
+ *
+ * Runs inside the caller's transaction: an account row removed while the delete
+ * that orphaned it later rolls back would leave the accounts page missing a
+ * subscription that still exists.
+ */
+async function reapOrphanedAccounts(
+  actor: Principal,
+  tx: DbTx,
+  ctx: RequestContext,
+): Promise<void> {
+  const orphaned = await deleteOrphanedAccounts(tx);
+  if (orphaned.length === 0) return;
+
+  await repo.writeAudit(
+    {
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      action: "account.deleted",
+      target: orphaned.join(", ").slice(0, 255),
+      detail: "no machines or people left on this Claude account",
+      ...ctx,
+    },
+    tx,
+  );
+}
 
 export interface RequestContext {
   ip?: string;
@@ -106,6 +138,9 @@ export async function deleteSystem(
       tx,
     );
     await tx.delete(systems).where(eq(systems.systemId, systemId));
+    // Retiring the last machine on a subscription leaves the Claude account
+    // behind with nothing pointing at it, and there is no UI to remove one.
+    await reapOrphanedAccounts(actor, tx, ctx);
   });
 }
 
@@ -363,5 +398,8 @@ export async function deleteUser(
       tx,
     );
     await tx.delete(users).where(eq(users.id, userId));
+    // `user_systems` cascades away with the row above, so this is the moment a
+    // Claude account can become unreferenced.
+    await reapOrphanedAccounts(actor, tx, ctx);
   });
 }

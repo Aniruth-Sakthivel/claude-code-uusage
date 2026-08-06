@@ -151,6 +151,45 @@ function UsageBreakdown({ account }: { account: AccountRow }) {
   );
 }
 
+/**
+ * One rate-limit window.
+ *
+ * `expired` is the case worth spelling out: a reading did arrive, but its
+ * window has since rolled over, so the percentage that came with it describes a
+ * window that no longer exists. Printing the old number would be wrong and
+ * printing a bare "—" would read as "never measured", so the row says what is
+ * actually true — the figure is superseded and the next one has not landed yet.
+ */
+function LimitRow({
+  label,
+  percent,
+  resetsAt,
+  expired,
+  health,
+}: {
+  label: string;
+  percent: number | null;
+  resetsAt: string | null;
+  expired: boolean;
+  health: AccountRow["health"];
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between text-xs">
+        <span className="text-muted">{label}</span>
+        <span className="tnum text-2xs text-muted">
+          {expired
+            ? "window reset — awaiting reading"
+            : resetsAt
+              ? `resets ${fmtResetsIn(resetsAt)}`
+              : "—"}
+        </span>
+      </div>
+      <UtilizationMeter percent={percent} health={expired ? "unknown" : health} compact />
+    </div>
+  );
+}
+
 /** One subscription: what it is, how loaded it is, and who is using it. */
 function AccountCard({ account: a }: { account: AccountRow }) {
   return (
@@ -180,24 +219,26 @@ function AccountCard({ account: a }: { account: AccountRow }) {
 
       <div className="mt-4 grid gap-4 md:grid-cols-[1fr_1.2fr]">
         <div className="flex flex-col gap-3">
-          <div>
-            <div className="mb-1 flex items-baseline justify-between text-xs">
-              <span className="text-muted">Weekly limit</span>
-              <span className="tnum text-2xs text-muted">
-                {a.weekly_resets_at ? `resets ${fmtResetsIn(a.weekly_resets_at)}` : "—"}
-              </span>
+          <LimitRow
+            label="Weekly limit"
+            percent={a.weekly_percent}
+            resetsAt={a.weekly_resets_at}
+            expired={a.weekly_expired}
+            health={a.health}
+          />
+          <LimitRow
+            label="5-hour limit"
+            percent={a.session_percent}
+            resetsAt={a.session_resets_at}
+            expired={a.session_expired}
+            health={a.health}
+          />
+          {a.utilization_fetched_at && (
+            <div className="text-2xs text-muted">
+              Limits read {fmtRelative(a.utilization_fetched_at)} — Claude Code refreshes
+              these only while it is running on a bound machine.
             </div>
-            <UtilizationMeter percent={a.weekly_percent} health={a.health} compact />
-          </div>
-          <div>
-            <div className="mb-1 flex items-baseline justify-between text-xs">
-              <span className="text-muted">5-hour limit</span>
-              <span className="tnum text-2xs text-muted">
-                {a.session_resets_at ? `resets ${fmtResetsIn(a.session_resets_at)}` : "—"}
-              </span>
-            </div>
-            <UtilizationMeter percent={a.session_percent} health={a.health} compact />
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
             <div>

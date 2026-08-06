@@ -16,6 +16,34 @@ import type { Allowed } from "../repositories/scope.js";
 const PRIMARY_KIND = "weekly_all";
 const SESSION_KIND = "session";
 
+type Reading = AccountListRow["limits"][number];
+
+/**
+ * A cached reading is only true until its own window rolls over.
+ *
+ * These figures are whatever Claude Code last wrote to `~/.claude.json`, and it
+ * only rewrites that cache when it talks to Anthropic. On a machine nobody is
+ * driving, the agent keeps re-posting the same reading every minute and the
+ * dedup index correctly drops it — so the last value before the window reset
+ * stays on screen indefinitely. Observed in production: a 5-hour window read at
+ * 60% with `resets_at` of 08:49 was still being served at 10:11, long after it
+ * had actually gone back to zero.
+ *
+ * `resets_at` is the one thing in the reading that stays meaningful as it ages:
+ * once it is in the past, the window provably restarted and the percentage that
+ * came with it describes a window that no longer exists. What the new window
+ * stands at is unknown until the next reading — reporting zero would be just as
+ * invented as leaving 60% up — so the reading is dropped and the UI says it is
+ * waiting rather than showing a number nobody should act on.
+ */
+function stillValid(limit: Reading | undefined, now: number): Reading | null {
+  if (!limit) return null;
+  if (!limit.resets_at) return limit; // no window boundary to expire against
+  const resetsAt = Date.parse(limit.resets_at);
+  if (!Number.isFinite(resetsAt)) return limit;
+  return resetsAt > now ? limit : null;
+}
+
 export interface AccountView {
   id: number;
   account_uuid: string;
@@ -33,6 +61,13 @@ export interface AccountView {
   /** Rolling 5-hour window. */
   session_percent: number | null;
   session_resets_at: string | null;
+  /**
+   * A reading arrived, but its window has since reset and no fresher one has
+   * come in — so the percentage is `null` because it is unknown, not because
+   * the account was never measured. The UI distinguishes the two.
+   */
+  weekly_expired: boolean;
+  session_expired: boolean;
   /** When Claude Code last refreshed these figures — they can be stale. */
   utilization_fetched_at: string | null;
   systems: AccountListRow["systems"];
@@ -71,11 +106,14 @@ export async function buildAccountList(
   weekStartUtc: string,
 ): Promise<AccountView[]> {
   const rows = await listAccounts(allowed, todayUtc, weekStartUtc);
+  const now = Date.now();
 
   return rows.map((row) => {
     const plan = derivePlan(row.organization_type, row.rate_limit_tier);
-    const weekly = row.limits.find((l) => l.kind === PRIMARY_KIND);
-    const session = row.limits.find((l) => l.kind === SESSION_KIND);
+    const weeklyRead = row.limits.find((l) => l.kind === PRIMARY_KIND);
+    const sessionRead = row.limits.find((l) => l.kind === SESSION_KIND);
+    const weekly = stillValid(weeklyRead, now);
+    const session = stillValid(sessionRead, now);
 
     // Health follows the worst of the two windows, so a nearly-exhausted
     // 5-hour window is not hidden by a comfortable weekly figure.
@@ -131,6 +169,8 @@ export async function buildAccountList(
       weekly_resets_at: weekly?.resets_at ?? null,
       session_percent: session?.percent ?? null,
       session_resets_at: session?.resets_at ?? null,
+      weekly_expired: Boolean(weeklyRead) && weekly === null,
+      session_expired: Boolean(sessionRead) && session === null,
       utilization_fetched_at: fetchedAt ?? null,
       systems: row.systems,
       users: usersWithShare,

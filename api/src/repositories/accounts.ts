@@ -8,9 +8,9 @@
  * plans.
  */
 
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 
-import { db } from "../db/client.js";
+import { db, type DbLike } from "../db/client.js";
 import {
   accountUsageSnapshots,
   claudeAccounts,
@@ -230,6 +230,40 @@ export async function recordAccountReport(input: {
 
     return { accountId: account.id, switchedFrom, previousPercents };
   });
+}
+
+/**
+ * Remove Claude accounts nothing refers to any more.
+ *
+ * `system_account_bindings` is the only edge from an account back to the fleet:
+ * a deleted machine cascades its bindings away, and a person reaches an account
+ * only through the machines assigned to them. So an account with no binding left
+ * has neither a machine nor a person on it — and because there is no delete
+ * endpoint for an account, it would otherwise sit on the accounts page forever.
+ *
+ * An account whose machines are still bound but unowned is deliberately kept.
+ * That machine is still reporting, so the subscription is still real; the page
+ * already shows it under "unassigned", and deleting it would only invite the
+ * next agent report to recreate it a minute later, minus its history.
+ *
+ * Cascades to `system_account_bindings` and `account_usage_snapshots`. Takes a
+ * connection so it can run inside the same transaction as the delete that
+ * orphaned the account.
+ */
+export async function deleteOrphanedAccounts(conn: DbLike = db): Promise<string[]> {
+  const removed = await conn
+    .delete(claudeAccounts)
+    .where(
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(systemAccountBindings)
+          .where(eq(systemAccountBindings.accountId, claudeAccounts.id)),
+      ),
+    )
+    .returning({ uuid: claudeAccounts.accountUuid, email: claudeAccounts.emailAddress });
+
+  return removed.map((r) => r.email || r.uuid);
 }
 
 /**

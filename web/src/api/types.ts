@@ -458,6 +458,13 @@ export interface AccountRow {
   weekly_resets_at: string | null;
   session_percent: number | null;
   session_resets_at: string | null;
+  /**
+   * The window reset after the last reading was taken, so its percentage is
+   * superseded and the fresh one has not arrived — distinct from an account
+   * that was never measured at all, which reports both `null` and `false`.
+   */
+  weekly_expired: boolean;
+  session_expired: boolean;
   /** Claude Code cached these figures — they can lag reality. */
   utilization_fetched_at: string | null;
   systems: AccountSystemRef[];
