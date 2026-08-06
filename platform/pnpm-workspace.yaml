@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+allowBuilds:
+  # vitest's bundler. Trusted, and its postinstall only fetches the platform binary.
+  esbuild: true
