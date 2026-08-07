@@ -24,6 +24,7 @@ export const qk = {
   roles: ["roles"] as const,
   keys: (systemId: string | null) => ["keys", systemId] as const,
   commands: (systemId: string | null) => ["commands", systemId] as const,
+  systemHealth: (systemId: string) => ["system-health", systemId] as const,
 
   initiatives: ["initiatives"] as const,
   initiative: (id: number) => ["initiative", id] as const,

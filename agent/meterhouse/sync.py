@@ -146,6 +146,17 @@ class SyncClient:
             payload["session_titles"] = session_titles
         return self._post("/api/v1/usage/sync", payload)
 
+    def report_health(self, health: dict) -> dict:
+        """Push the full local health snapshot for the diagnostics view.
+
+        Distinct from `report_status`: that is a curated per-transition
+        subset sent often and must stay cheap; this is the complete picture
+        (scan counts, WS state, offline queue depth, validation issues),
+        sent rarely — a periodic health-loop tick, or on demand via the
+        `health_check` command.
+        """
+        return self._post("/api/v1/systems/health", health)
+
     def report_account(self, payload: dict) -> dict:
         """Report Claude account identity + rate-limit utilization.
 

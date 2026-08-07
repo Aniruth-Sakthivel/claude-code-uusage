@@ -144,6 +144,50 @@ export async function deleteSystem(
   });
 }
 
+export interface UpdateSystemInput {
+  display_name?: string;
+  owner?: string;
+  location?: string;
+  environment?: string;
+  notes?: string;
+}
+
+export async function updateSystem(
+  actor: Principal,
+  systemId: string,
+  input: UpdateSystemInput,
+  ctx: RequestContext = {},
+) {
+  const system = await repo.getSystem(systemId);
+  if (!system) throw notFound("System not found");
+
+  const patch: Partial<typeof systems.$inferInsert> = {};
+  if (input.display_name != null) patch.displayName = input.display_name;
+  if (input.owner != null) patch.owner = input.owner;
+  if (input.location != null) patch.location = input.location;
+  if (input.environment != null) patch.environment = input.environment;
+  if (input.notes != null) patch.notes = input.notes;
+
+  await db.transaction(async (tx) => {
+    if (Object.keys(patch).length > 0) {
+      await tx.update(systems).set(patch).where(eq(systems.systemId, systemId));
+    }
+    await repo.writeAudit(
+      {
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        action: "system.updated",
+        target: systemId,
+        detail: system.displayName,
+        ...ctx,
+      },
+      tx,
+    );
+  });
+
+  return (await repo.getSystem(systemId))!;
+}
+
 export async function issueApiKey(
   actor: Principal,
   systemId: string,

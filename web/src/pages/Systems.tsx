@@ -1,38 +1,139 @@
 /** Systems list — every connected PC with its status and totals. */
 
 import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import { fleetKeys, qk } from "../api/queryKeys";
-import type { SystemRow } from "../api/types";
+import type { CreateSystemPayload, SystemCreated, SystemRow, UpdateSystemPayload } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { Avatar } from "../components/Avatar";
 import { ScanActivity } from "../components/ScanActivity";
 import { SystemCommandsPanel } from "../components/SystemCommandsPanel";
 import {
+  Alert,
   Button,
   Card,
+  CardHead,
+  CodeBlock,
   ConfirmDialog,
   EmptyState,
   ErrorState,
   Eyebrow,
+  Field,
   Input,
   LoadingState,
+  Modal,
   Pagination,
+  Select,
   StatusPill,
   Table,
   Td,
+  Textarea,
   Th,
   useToast,
 } from "../components/ui";
 import { fmtRelative, fmtTokens } from "../lib/format";
 import { useTableControls } from "../lib/useTableControls";
 
+/** Mirrors the list in ConnectPanel.tsx — kept in sync there, not imported,
+ * since ConnectPanel's copy is scoped to its own self-connect flow. */
+const ENVIRONMENTS = ["", "development", "staging", "production", "personal"];
+
+type SystemFormState = {
+  display_name: string;
+  owner: string;
+  environment: string;
+  location: string;
+  notes: string;
+};
+
+const EMPTY_FORM: SystemFormState = {
+  display_name: "",
+  owner: "",
+  environment: "",
+  location: "",
+  notes: "",
+};
+
+function SystemFormFields({
+  form,
+  onChange,
+}: {
+  form: SystemFormState;
+  onChange: (next: SystemFormState) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <Field label="Name" required>
+        {(p) => (
+          <Input
+            {...p}
+            value={form.display_name}
+            onChange={(e) => onChange({ ...form, display_name: e.target.value })}
+            placeholder="e.g. Alex's laptop"
+            required
+          />
+        )}
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Owner">
+          {(p) => (
+            <Input
+              {...p}
+              value={form.owner}
+              onChange={(e) => onChange({ ...form, owner: e.target.value })}
+              placeholder="Name or email"
+            />
+          )}
+        </Field>
+        <Field label="Environment">
+          {(p) => (
+            <Select
+              {...p}
+              value={form.environment}
+              onChange={(e) => onChange({ ...form, environment: e.target.value })}
+            >
+              {ENVIRONMENTS.map((v) => (
+                <option key={v} value={v}>
+                  {v || "— none —"}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      </div>
+      <Field label="Location">
+        {(p) => (
+          <Input
+            {...p}
+            value={form.location}
+            onChange={(e) => onChange({ ...form, location: e.target.value })}
+            placeholder="e.g. Home office"
+          />
+        )}
+      </Field>
+      <Field label="Notes">
+        {(p) => (
+          <Textarea
+            {...p}
+            rows={3}
+            value={form.notes}
+            onChange={(e) => onChange({ ...form, notes: e.target.value })}
+          />
+        )}
+      </Field>
+    </div>
+  );
+}
+
 /**
  * Worst first, so sorting descending puts what needs attention on top.
- * `dormant` sits with the healthy end: an agent that stopped because nobody is
- * using Claude Code is working correctly.
+ * `dormant` sits with the healthy end: the agent runs continuously now, so it
+ * only reports "stopped" after a deliberate `stop` command or an uninstall —
+ * a rare, intentional state, not the common resting one.
  */
 const HEALTH_ORDER: SystemRow["health"][] = [
   "dead",
@@ -46,17 +147,16 @@ const HEALTH_ORDER: SystemRow["health"][] = [
 /**
  * What each status means, and — more usefully — what to do about it.
  *
- * The vocabulary is not self-evident any more. "Idle" reads as a problem until
- * you know the agent is *meant* to stop between sessions, and the difference
- * between Idle and Not running is the difference between "nothing to do" and
- * "go fix that PC". Spelling it out on the page beats leaving it to a tooltip.
+ * The agent runs continuously now (no Claude Code session gating), so
+ * `healthy` is the expected steady state for essentially every connected PC.
+ * Spelling out the exceptions on the page beats leaving them to a tooltip.
  */
 function StatusLegend() {
   const items: { health: SystemRow["health"]; means: string }[] = [
-    { health: "healthy", means: "In a Claude Code session and reporting." },
-    { health: "dormant", means: "Stopped because no session is open. Nothing to do." },
+    { health: "healthy", means: "Running and reporting normally." },
+    { health: "dormant", means: "Stopped deliberately (a Stop command, or uninstalled)." },
     { health: "late", means: "Missed a check-in — usually asleep or offline." },
-    { health: "stalled", means: "Went quiet mid-session without stopping cleanly." },
+    { health: "stalled", means: "Went quiet without stopping cleanly. Try Restart agent." },
     { health: "dead", means: "No contact for over a day. Re-run the connect command." },
     { health: "never", means: "Enrolled but has never reported. Finish setup on that PC." },
   ];
@@ -88,6 +188,11 @@ export function Systems() {
 
   const [pendingDelete, setPendingDelete] = useState<SystemRow | null>(null);
   const [managing, setManaging] = useState<SystemRow | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createForm, setCreateForm] = useState<SystemFormState>(EMPTY_FORM);
+  const [editing, setEditing] = useState<SystemRow | null>(null);
+  const [editForm, setEditForm] = useState<SystemFormState>(EMPTY_FORM);
+  const [revealedKey, setRevealedKey] = useState<{ key: string; systemName: string } | null>(null);
 
   const q = useQuery({
     queryKey: qk.systems,
@@ -110,6 +215,65 @@ export function Systems() {
       setPendingDelete(null);
     },
   });
+
+  const create = useMutation({
+    mutationFn: (payload: CreateSystemPayload) => api.post<SystemCreated>("/admin/systems", payload),
+    onSuccess: (data) => {
+      fleetKeys.forEach((key) => qc.invalidateQueries({ queryKey: key }));
+      setRevealedKey({ key: data.api_key, systemName: data.system.display_name });
+      setCreating(false);
+      setCreateForm(EMPTY_FORM);
+    },
+    onError: (e: Error) => toast.push(e.message, "error"),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: UpdateSystemPayload }) =>
+      api.patch<SystemRow>(`/admin/systems/${id}`, patch),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.systems });
+      toast.push("System updated.");
+      setEditing(null);
+    },
+    onError: (e: Error) => toast.push(e.message, "error"),
+  });
+
+  function submitCreate(e: FormEvent) {
+    e.preventDefault();
+    create.mutate({
+      display_name: createForm.display_name.trim(),
+      owner: createForm.owner.trim(),
+      environment: createForm.environment,
+      location: createForm.location.trim(),
+      notes: createForm.notes.trim(),
+    });
+  }
+
+  function openEdit(s: SystemRow) {
+    setEditing(s);
+    setEditForm({
+      display_name: s.display_name,
+      owner: s.owner,
+      environment: s.environment,
+      location: s.location,
+      notes: s.notes,
+    });
+  }
+
+  function submitEdit(e: FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    update.mutate({
+      id: editing.system_id,
+      patch: {
+        display_name: editForm.display_name.trim(),
+        owner: editForm.owner.trim(),
+        environment: editForm.environment,
+        location: editForm.location.trim(),
+        notes: editForm.notes.trim(),
+      },
+    });
+  }
 
   useEffect(() => {
     document.title = "Systems — Meterhouse";
@@ -138,16 +302,42 @@ export function Systems() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div>
-        <Eyebrow>Fleet</Eyebrow>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Systems</h1>
-        <p className="mt-1.5 max-w-3xl text-base text-muted">
-          Every PC reporting usage, with its live status. The agent runs only while
-          someone has a Claude Code session open, so most machines sit at{" "}
-          <span className="font-medium text-ink-2">Idle</span> — that is healthy, not a
-          fault.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <Eyebrow>Fleet</Eyebrow>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Systems</h1>
+          <p className="mt-1.5 max-w-3xl text-base text-muted">
+            Every PC reporting usage, with its live status. The agent runs continuously,
+            independent of Claude Code sessions, so{" "}
+            <span className="font-medium text-ink-2">Working</span> is the normal state
+            for a connected PC.
+          </p>
+        </div>
+        {canManage && (
+          <Button variant="ghost" size="sm" onClick={() => setCreating(true)}>
+            Add system manually
+          </Button>
+        )}
       </div>
+
+      {revealedKey && (
+        <Card>
+          <CardHead
+            title={`${revealedKey.systemName} — system created`}
+            right={
+              <Button variant="subtle" size="sm" onClick={() => setRevealedKey(null)}>
+                Done
+              </Button>
+            }
+          />
+          <Alert tone="warn" title="Copy this now">
+            This is the only time the full API key is shown.
+          </Alert>
+          <div className="mt-3">
+            <CodeBlock code={revealedKey.key} />
+          </div>
+        </Card>
+      )}
 
       <StatusLegend />
 
@@ -242,7 +432,21 @@ export function Systems() {
                   <Td>
                     <ScanActivity scan={s} neverReported={s.never_synced} />
                   </Td>
-                  <Td className="text-ink-2">{s.owner || "—"}</Td>
+                  <Td>
+                    {s.owner ? (
+                      <div className="flex items-center gap-2.5">
+                        <Avatar label={s.owner} />
+                        <span className="truncate text-sm text-ink-2">{s.owner}</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2.5">
+                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dashed border-line text-2xs text-muted">
+                          —
+                        </span>
+                        <span className="text-sm text-muted">No owner</span>
+                      </div>
+                    )}
+                  </Td>
                   <Td className="text-ink-2">{s.environment || "—"}</Td>
                   <Td className="tnum text-ink-2">
                     {s.never_synced ? "never" : fmtRelative(s.last_sync_at)}
@@ -256,6 +460,14 @@ export function Systems() {
                   {canManage && (
                     <Td align="right">
                       <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => openEdit(s)}
+                          aria-label={`Edit ${s.display_name}`}
+                        >
+                          Edit
+                        </Button>
                         <Button
                           size="sm"
                           variant="ghost"
@@ -292,6 +504,51 @@ export function Systems() {
       </Card>
 
       {managing && <SystemCommandsPanel system={managing} onClose={() => setManaging(null)} />}
+
+      <Modal
+        open={creating}
+        title="Add a system"
+        hint="This registers a system record without an agent connected. Use Connect a PC if you want it to start reporting usage automatically."
+        onClose={() => setCreating(false)}
+      >
+        <form onSubmit={submitCreate} className="flex flex-col gap-4">
+          <SystemFormFields form={createForm} onChange={setCreateForm} />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setCreating(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              loading={create.isPending}
+              disabled={!createForm.display_name.trim()}
+            >
+              Add system
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={editing !== null}
+        title={`Edit ${editing?.display_name ?? ""}`}
+        onClose={() => setEditing(null)}
+      >
+        <form onSubmit={submitEdit} className="flex flex-col gap-4">
+          <SystemFormFields form={editForm} onChange={setEditForm} />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              loading={update.isPending}
+              disabled={!editForm.display_name.trim()}
+            >
+              Save changes
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <ConfirmDialog
         open={pendingDelete !== null}

@@ -14,6 +14,13 @@ import * as commandsRepo from "../repositories/commands.js";
 import { db } from "../db/client.js";
 import type { RequestContext } from "./admin.js";
 
+// NOTE: this does not push to a live agent WebSocket on enqueue — the WS
+// server (ws/server.ts) is a separate process and only flushes pending
+// commands when the agent's own next outbound message arrives (see
+// `flushPendingCommands`/`hub.sendCommandToAgent`). Worst-case delivery is
+// still bounded by the agent's next REST check-in, which every action here
+// tolerates fine; revisit only if a command is found to need sub-second
+// delivery in practice.
 export async function enqueueCommand(
   actor: Principal,
   systemId: string,

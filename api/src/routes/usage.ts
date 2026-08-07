@@ -11,7 +11,9 @@ import { db } from "../db/client.js";
 import { systems } from "../db/schema.js";
 import * as commandsRepo from "../repositories/commands.js";
 import { ingestEvents, ingestSessionExtras, type IncomingEvent } from "../repositories/usage.js";
+import * as healthService from "../services/health.js";
 import {
+  agentHealthReport,
   agentStatusRequest,
   commandAckRequest,
   registerRequest,
@@ -89,6 +91,44 @@ export async function usageRoutes(app: FastifyInstance) {
     }
 
     await db.update(systems).set(patch).where(eq(systems.systemId, system.systemId));
+    return { ok: true };
+  });
+
+  /**
+   * Full local diagnostics snapshot, pushed rarely (every ~10th health-loop
+   * tick, or on demand via the `health_check` command) — unlike `/status`
+   * above, this does not need to stay cheap, but it also plays no part in
+   * command delivery: an agent's commands always come from register/
+   * heartbeat/sync/status, never from here.
+   */
+  app.post("/api/v1/systems/health", { preHandler: requireAgent }, async (req) => {
+    const system = currentAgent(req);
+    const body = agentHealthReport.parse(req.body ?? {});
+
+    await db
+      .update(systems)
+      .set({ lastSeenAt: new Date() })
+      .where(eq(systems.systemId, system.systemId));
+
+    await healthService.reportHealth(system.systemId, {
+      startedAt: body.started_at ? new Date(body.started_at) : null,
+      updatedAt: body.updated_at ? new Date(body.updated_at) : null,
+      lastScanAt: body.last_scan_at ? new Date(body.last_scan_at) : null,
+      lastScanDurationMs:
+        body.last_scan_duration_ms != null ? Math.round(body.last_scan_duration_ms) : null,
+      lastScanError: body.last_scan_error ?? "",
+      scansCompleted: body.scans_completed,
+      scansFailed: body.scans_failed,
+      wsConnected: body.ws_connected,
+      wsLastConnectedAt: body.ws_last_connected_at ? new Date(body.ws_last_connected_at) : null,
+      wsLastDisconnectReason: body.ws_last_disconnect_reason ?? "",
+      wsReconnectAttempts: body.ws_reconnect_attempts,
+      offlineQueueDepth: body.offline_queue_depth,
+      activeSessions: body.active_sessions,
+      pid: body.pid ?? null,
+      validationIssues: JSON.stringify(body.validation_issues),
+    });
+
     return { ok: true };
   });
 

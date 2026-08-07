@@ -29,6 +29,38 @@ def default_lock_path() -> Path:
     return Path.home() / ".claude" / "meterhouse" / "daemon.lock"
 
 
+def is_daemon_running(lock_path: Path | None = None) -> bool:
+    """True when some process already holds the daemon's single-instance lock.
+
+    Probing by taking the lock and dropping it is safe even though it races a
+    daemon starting up at the same instant: the loser of that race exits, and
+    whichever side starts next finds the lock free. The outcome is always
+    exactly one daemon, never zero.
+    """
+    lock = SingleInstanceLock(lock_path)
+    if lock.acquire():
+        lock.release()
+        return False
+    return True
+
+
+def read_locked_pid(lock_path: Path | None = None) -> int | None:
+    """The PID last written to the lock file, or None if there isn't one.
+
+    Best-effort only: the file could be stale (holder crashed without the OS
+    ever releasing the lock is not possible on Windows/POSIX file locks, but a
+    *just-released* lock briefly still has old text on disk) or simply absent.
+    Callers that need to know "is this PID actually alive" should pair this
+    with `is_daemon_running()`.
+    """
+    path = Path(lock_path) if lock_path else default_lock_path()
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+        return int(text) if text else None
+    except (OSError, ValueError):
+        return None
+
+
 class SingleInstanceLock:
     """Held for the process lifetime. Use :meth:`acquire` to test for a rival."""
 

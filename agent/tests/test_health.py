@@ -48,3 +48,24 @@ def test_load_corrupt_file_returns_none(tmp_path):
     path = tmp_path / "health.json"
     path.write_text("not json", encoding="utf-8")
     assert HealthState.load(path) is None
+
+
+def test_record_validation_issue_appends_and_caps():
+    state = HealthState()
+    for i in range(HealthState.MAX_VALIDATION_ISSUES + 5):
+        state.record_validation_issue(f"issue {i}")
+
+    assert len(state.validation_issues) == HealthState.MAX_VALIDATION_ISSUES
+    # Oldest are dropped first — the newest issue is always kept.
+    assert state.validation_issues[-1] == f"issue {HealthState.MAX_VALIDATION_ISSUES + 4}"
+
+
+def test_validation_issues_round_trip(tmp_path):
+    path = tmp_path / "health.json"
+    state = HealthState()
+    state.record_validation_issue("account report missing account_uuid")
+    state.save(path)
+
+    loaded = HealthState.load(path)
+    assert loaded is not None
+    assert loaded.validation_issues == ["account report missing account_uuid"]

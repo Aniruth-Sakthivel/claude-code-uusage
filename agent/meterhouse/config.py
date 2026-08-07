@@ -22,12 +22,12 @@ from pathlib import Path
 #: Fields the dashboard is allowed to change remotely, via a `set_config`
 #: command. An allowlist rather than "any attribute that exists": the config
 #: also holds things a remote operator has no business setting on someone's
-#: machine (`always_on`, `log_file`, the account/title privacy switches), and
-#: `hasattr` would happily accept every one of them.
+#: machine (`log_file`, the account/title privacy switches), and `hasattr`
+#: would happily accept every one of them.
 CONFIG_PATCH_ALLOWLIST = frozenset({
     "scan_interval_seconds",
+    "sync_interval_seconds",
     "session_idle_timeout_seconds",
-    "shutdown_grace_seconds",
     "ws_enabled",
     "session_titles_enabled",
     "account_reporting_enabled",
@@ -43,26 +43,21 @@ def default_runtime_config_path() -> Path:
 
 @dataclass
 class AgentConfig:
-    # Scanning
-    scan_interval_seconds: int = 60
-    # Session lifecycle. The agent runs only while a Claude Code session is
-    # open, so these govern when it starts and — more importantly — when it is
-    # allowed to stop.
-    #
-    # `session_idle_timeout_seconds` is the safety net for sessions that never
-    # fire SessionEnd (Claude Code killed, crashed, or the machine slept). It
-    # is measured against transcript writes as well as hook events, so a long
-    # agent turn with no user prompt still counts as active — see
-    # sessions.SessionRecord.age_seconds. Too low and the daemon quits out from
-    # under someone who is still working; five minutes is comfortably longer
-    # than any gap within a live session.
+    # Scanning. The daemon is always-on now (no Claude Code session hooks) —
+    # every tick re-scans the transcript tree, which is cheap and incremental
+    # (mtime-watermarked), so this can be tight.
+    scan_interval_seconds: int = 5
+    # A full sync round trip (usage push + heartbeat + account report) is not
+    # free at fleet scale, so it runs on its own, slower cadence — except a
+    # tick that actually found new events always syncs immediately regardless
+    # of this interval, so real activity is never delayed by it. Never faster
+    # than scan_interval_seconds (see `validated()`); syncing more often than
+    # you scan has nothing new to say.
+    sync_interval_seconds: int = 20
+    # How stale a transcript can be and still count toward the "active
+    # sessions" number reported to the dashboard (`activity.count_recent`) —
+    # a file-level proxy now that there is no hook-fed session registry.
     session_idle_timeout_seconds: int = 300
-    # Breathing room between "the last session ended" and actually exiting, so
-    # closing one window and opening another does not churn the process.
-    shutdown_grace_seconds: int = 20
-    # Opt back in to the old always-running behaviour, for machines that cannot
-    # register hooks at all (managed settings.json, locked-down policy).
-    always_on: bool = False
     # Real-time push (optional — the agent works fully without it, falling
     # back to the existing REST `sync` path on its own schedule).
     ws_enabled: bool = False
@@ -95,9 +90,9 @@ class AgentConfig:
     # Observability
     log_level: str = "INFO"
     log_json: bool = True
-    # Where the daemon's log goes. It is started detached and windowless by a
-    # hook now, so stderr goes nowhere — without a file there is no record at
-    # all of what a background agent did. None means the default path below.
+    # Where the daemon's log goes. It runs detached and windowless, so stderr
+    # goes nowhere — without a file there is no record at all of what a
+    # background agent did. None means the default path below.
     log_file: str | None = None
     log_file_max_bytes: int = 1_000_000
     log_file_backups: int = 2
@@ -106,6 +101,7 @@ class AgentConfig:
     def _env_overrides() -> dict:
         mapping = {
             "METERHOUSE_SCAN_INTERVAL": ("scan_interval_seconds", int),
+            "METERHOUSE_SYNC_INTERVAL": ("sync_interval_seconds", int),
             "METERHOUSE_WS_ENABLED": ("ws_enabled", lambda v: v.lower() in ("1", "true", "yes")),
             "METERHOUSE_WS_URL": ("ws_url", str),
             "METERHOUSE_WS_CONNECT_TIMEOUT": ("ws_connect_timeout_seconds", float),
@@ -125,8 +121,6 @@ class AgentConfig:
                 lambda v: v.lower() in ("1", "true", "yes"),
             ),
             "METERHOUSE_SESSION_IDLE_TIMEOUT": ("session_idle_timeout_seconds", int),
-            "METERHOUSE_SHUTDOWN_GRACE": ("shutdown_grace_seconds", int),
-            "METERHOUSE_ALWAYS_ON": ("always_on", lambda v: v.lower() in ("1", "true", "yes")),
             "METERHOUSE_LOG_LEVEL": ("log_level", str),
             "METERHOUSE_LOG_JSON": ("log_json", lambda v: v.lower() in ("1", "true", "yes")),
             "METERHOUSE_LOG_FILE": ("log_file", str),
@@ -172,10 +166,12 @@ class AgentConfig:
         hostile config files, not against legitimate tuning.
         """
         self.scan_interval_seconds = max(5, min(self.scan_interval_seconds, 86_400))
-        # Floor of 30s: anything shorter and an ordinary pause for thought
-        # would look like an abandoned session and stop the agent mid-work.
+        # Never faster than the scan cadence — a sync tighter than the scan
+        # interval would have nothing new to report most of the time.
+        self.sync_interval_seconds = max(
+            self.scan_interval_seconds, min(self.sync_interval_seconds, 3_600)
+        )
         self.session_idle_timeout_seconds = max(30, min(self.session_idle_timeout_seconds, 86_400))
-        self.shutdown_grace_seconds = max(0, min(self.shutdown_grace_seconds, 3_600))
         self.log_file_max_bytes = max(10_000, min(self.log_file_max_bytes, 100_000_000))
         self.log_file_backups = max(0, min(self.log_file_backups, 20))
         self.retry_max_attempts = max(1, min(self.retry_max_attempts, 50))

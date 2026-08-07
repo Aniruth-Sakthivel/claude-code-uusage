@@ -11,8 +11,8 @@
  *
  * Note on scope: a browser cannot read `~/.claude/projects/*.jsonl` — sandboxing
  * forbids it — so no button here can scan a PC directly. What this does deliver
- * is one line to paste, after which the agent starts and stops with the user's
- * Claude Code sessions on its own.
+ * is one line to paste, after which the agent runs continuously in the
+ * background on its own, independent of Claude Code sessions.
  *
  * That one line is the whole point of this screen. The server already generates
  * it (`install_command`), but this panel used to render only a seven-step
@@ -32,13 +32,9 @@ import type { ConnectResponse, SystemRow } from "../api/types";
 import {
   AGENT_INSTALL,
   DAEMON_COMMAND,
-  DAILY_CATCHUP_COMMAND,
-  INSTALL_HOOKS_COMMAND,
-  SCAN_COMMAND,
-  SESSIONS_COMMAND,
-  SYNC_COMMAND,
+  STATUS_COMMAND,
   accountReportCommands,
-  registerCommand,
+  connectCommand,
   serverUrl,
 } from "../lib/agentSetup";
 import {
@@ -103,7 +99,7 @@ function ConnectWaitStatusBlock({
     <Alert tone="warn" title="Still hasn't reported in">
       <p>
         Check the PowerShell window on that PC for an error, or run{" "}
-        <code className="rounded bg-surface-2 px-1">{SESSIONS_COMMAND}</code> there — it
+        <code className="rounded bg-surface-2 px-1">{STATUS_COMMAND}</code> there — it
         says exactly what happened. This page keeps waiting either way.
       </p>
       {onRetry && (
@@ -340,56 +336,32 @@ export function ConnectPanel({
             <Step
               n={2}
               title="Connect this PC"
-              code={registerCommand(serverUrl(), result.api_key, result.display_name)}
+              code={connectCommand(serverUrl(), result.api_key, result.display_name)}
             >
-              Your API key is in this line and does not expire — keep it somewhere safe.
-            </Step>
-
-            <Step n={3} title="Read local usage" code={SCAN_COMMAND}>
-              Reads token counts from{" "}
-              <code className="rounded bg-surface-2 px-1">~/.claude</code> into a local
-              database. Prompts, responses, and source code are never read.
-            </Step>
-
-            <Step n={4} title="Send it to the dashboard" code={SYNC_COMMAND}>
-              This is the one that makes data appear. Refresh the dashboard after it prints{" "}
-              <code className="rounded bg-surface-2 px-1">Sync complete</code>.
-            </Step>
-
-            <Step n={5} title="Let Claude Code start and stop it" code={INSTALL_HOOKS_COMMAND}>
-              The agent then runs only while you have a Claude Code session open — nothing
-              in the background on an idle PC, and no window to leave open. The Systems
-              page shows <span className="font-semibold text-good">Working</span> during a
-              session and <span className="font-semibold">Idle</span> between them; Idle is
-              healthy.{" "}
-              <span className="font-semibold">
-                If Claude Code is open right now, fully quit and reopen it
-              </span>{" "}
-              — it reads hook config when a session starts, not while running, so a session
-              already open when you run this (including the one you copied this from) won't
-              pick it up.
-            </Step>
-
-            <Step n={6} title="Add a daily safety net" optional code={DAILY_CATCHUP_COMMAND}>
-              One catch-up scan a day, in case the hooks ever fail to install. Scanning
-              never double-counts, so this costs nothing but a moment.
+              One command does the rest: registers this PC, runs the first scan and
+              sync, shares Claude account + plan + rate-limit usage, starts the agent,
+              and (on Windows) registers the scheduled task that keeps it running
+              across reboots. Your API key is in this line and does not expire — keep
+              it somewhere safe.
             </Step>
 
             <Step
-              n={7}
+              n={3}
               title="Report Claude account usage"
               optional
               code={accountReportCommands()}
             >
-              The one-liner above already does this. Only needed here if you skipped it, or
-              want to check the payload first — <code className="rounded bg-surface-2 px-1">
+              Step 2 already does this (via <code className="rounded bg-surface-2 px-1">
+              --account</code>). Only needed here if you skipped it, or want to check
+              the payload first — <code className="rounded bg-surface-2 px-1">
               show</code> prints exactly what would be sent without sending it.
             </Step>
 
-            <Step n={8} title="Watch it run" optional code={DAEMON_COMMAND}>
+            <Step n={4} title="Watch it run" optional code={DAEMON_COMMAND}>
               Prints as it goes, which is useful for diagnosing a PC that is not reporting.
-              It scans while a session is open and exits by itself when the last one ends,
-              so it is not a way to keep a machine connected — step 5 is.
+              Close the window (or run <code className="rounded bg-surface-2 px-1">
+              meterhouse stop</code>) when you're done watching — step 2's scheduled task
+              is what keeps it running unattended.
             </Step>
           </ol>
 
@@ -404,9 +376,8 @@ export function ConnectPanel({
         </details>
 
         <p className="mt-4 text-sm text-muted">
-          Not reporting? Run <code className="rounded bg-surface-2 px-1">{SESSIONS_COMMAND}</code>{" "}
-          on that PC — it says whether the hooks are installed and whether the agent is
-          running.
+          Not reporting? Run <code className="rounded bg-surface-2 px-1">{STATUS_COMMAND}</code>{" "}
+          on that PC — it says whether the agent is running and what it last reported.
         </p>
       </Card>
     );

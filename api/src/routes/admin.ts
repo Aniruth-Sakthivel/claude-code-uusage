@@ -13,6 +13,7 @@ import {
   apiKeyCreate,
   commandCreate,
   systemCreate,
+  systemUpdate,
   userCreate,
   userUpdate,
 } from "../schemas/index.js";
@@ -20,7 +21,9 @@ import { resolveInviteRedirectTo } from "../core/public-url.js";
 import { requestOrigin } from "../core/request-origin.js";
 import * as admin from "../services/admin.js";
 import * as commands from "../services/commands.js";
+import * as health from "../services/health.js";
 import { userOut } from "../services/auth.js";
+import type { AgentHealthSnapshotRow } from "../db/schema.js";
 
 function keyOut(k: ApiKeyRow) {
   return {
@@ -46,6 +49,28 @@ function commandOut(c: AgentCommandRow) {
     delivered_at: c.deliveredAt?.toISOString() ?? null,
     acked_at: c.ackedAt?.toISOString() ?? null,
     ack_detail: c.ackDetail,
+  };
+}
+
+function healthOut(systemId: string, h: AgentHealthSnapshotRow | null) {
+  return {
+    system_id: systemId,
+    started_at: h?.startedAt?.toISOString() ?? null,
+    updated_at: h?.updatedAt?.toISOString() ?? null,
+    last_scan_at: h?.lastScanAt?.toISOString() ?? null,
+    last_scan_duration_ms: h?.lastScanDurationMs ?? null,
+    last_scan_error: h?.lastScanError ?? null,
+    scans_completed: h?.scansCompleted ?? 0,
+    scans_failed: h?.scansFailed ?? 0,
+    ws_connected: h?.wsConnected ?? false,
+    ws_last_connected_at: h?.wsLastConnectedAt?.toISOString() ?? null,
+    ws_last_disconnect_reason: h?.wsLastDisconnectReason ?? null,
+    ws_reconnect_attempts: h?.wsReconnectAttempts ?? 0,
+    offline_queue_depth: h?.offlineQueueDepth ?? 0,
+    active_sessions: h?.activeSessions ?? 0,
+    pid: h?.pid ?? null,
+    validation_issues: h ? (JSON.parse(h.validationIssues || "[]") as string[]) : [],
+    recorded_at: h?.recordedAt?.toISOString() ?? null,
   };
 }
 
@@ -136,6 +161,21 @@ export async function adminRoutes(app: FastifyInstance) {
     return reply.code(201).send({ system: systemOut(system), api_key: apiKey });
   });
 
+  app.patch<{ Params: { id: string } }>(
+    "/api/v1/admin/systems/:id",
+    manageSystems,
+    async (req) => {
+      const body = systemUpdate.parse(req.body ?? {});
+      const system = await admin.updateSystem(
+        currentUser(req),
+        req.params.id,
+        body,
+        requestContext(req),
+      );
+      return systemOut(system);
+    },
+  );
+
   app.delete<{ Params: { id: string } }>(
     "/api/v1/admin/systems/:id",
     manageSystems,
@@ -186,6 +226,13 @@ export async function adminRoutes(app: FastifyInstance) {
       await admin.revokeApiKey(currentUser(req), Number(req.params.id), requestContext(req));
       return reply.code(204).send();
     },
+  );
+
+  // ── agent health (watcher diagnostics) ──────────────────────────────────────
+  app.get<{ Params: { id: string } }>(
+    "/api/v1/admin/systems/:id/health",
+    manageSystems,
+    async (req) => healthOut(req.params.id, await health.getSystemHealth(req.params.id)),
   );
 
   // ── agent commands (fleet management) ───────────────────────────────────────

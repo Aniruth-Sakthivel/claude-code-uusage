@@ -159,6 +159,26 @@ def test_ack_command_truncates_oversized_detail():
     assert len(captured["body"]["detail"]) == 2000
 
 
+# ── SyncClient.report_health ────────────────────────────────────────────────
+
+def test_report_health_posts_to_health_endpoint():
+    client = SyncClient("https://api.example.com", "key-1")
+    captured = {}
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return _FakeResponse({"ok": True})
+
+    snapshot = {"scans_completed": 3, "scans_failed": 0, "ws_connected": True}
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = client.report_health(snapshot)
+
+    assert result == {"ok": True}
+    assert captured["url"] == "https://api.example.com/api/v1/systems/health"
+    assert captured["body"] == snapshot
+
+
 # ── sync_store ────────────────────────────────────────────────────────────────
 
 def test_sync_store_marks_events_synced_after_push():

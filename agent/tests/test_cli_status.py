@@ -113,13 +113,11 @@ def test_config_patch_ignores_fields_outside_the_allowlist():
 
     applied = cfg.apply_patch({
         "scan_interval_seconds": 30,
-        "always_on": True,           # not remotely settable
-        "log_file": "/tmp/evil.log", # nor this
+        "log_file": "/tmp/evil.log", # not remotely settable
         "made_up": 1,
     })
 
     assert applied == ["scan_interval_seconds"]
-    assert cfg.always_on is False
     assert cfg.log_file is None
     assert saved == [True]
 

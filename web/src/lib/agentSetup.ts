@@ -41,6 +41,15 @@ export function registerCommand(server: string, apiKey: string, displayName: str
   return `python -m meterhouse register --server ${pwshQuote(server)} --api-key ${pwshQuote(apiKey)} --display-name ${pwshQuote(displayName)}`;
 }
 
+/**
+ * Everything below in one command: register, first scan, first sync, start
+ * the agent, and (on Windows) register the scheduled-task supervisor.
+ * `--account` also turns on Claude account reporting in the same step.
+ */
+export function connectCommand(server: string, apiKey: string, displayName: string): string {
+  return `python -m meterhouse connect --server ${pwshQuote(server)} --api-key ${pwshQuote(apiKey)} --display-name ${pwshQuote(displayName)} --account`;
+}
+
 export function scanSyncCommands(): string {
   return "python -m meterhouse scan\npython -m meterhouse sync";
 }
@@ -64,31 +73,59 @@ export function accountReportCommands(): string {
 /**
  * The answer to "do I have to leave a window running?" — no.
  *
- * This registers Claude Code's own session hooks, so the agent starts when a
- * session starts and stops when the last one ends. It replaced a scheduled task
- * that ran a scan+sync every 15 minutes forever: that task polled 96 times a
- * day on machines where nobody had opened Claude Code at all, and it is what
- * the agent's own installer now removes on upgrade.
+ * There are no Claude Code session hooks — the agent is a single persistent
+ * process, started once and kept alive by a scheduled task that relaunches it
+ * (harmlessly, if one is already running) roughly every minute, so it survives
+ * a reboot or crash without depending on Claude Code being open at all.
  */
-export const INSTALL_HOOKS_COMMAND = "python -m meterhouse install-hooks";
-
-/** Shows live sessions plus whether the hooks and agent are actually running —
- * the one command to run when a PC is not reporting. */
-export const SESSIONS_COMMAND = "python -m meterhouse sessions";
-
-/**
- * A once-a-day safety net, in case hook installation ever fails silently.
- * Scanning is incremental and idempotent, so a machine a day behind still
- * reports its full history.
- */
-export const DAILY_CATCHUP_COMMAND = [
+export const START_AGENT_COMMAND = [
   "$py = (Get-Command python).Source",
   "$pyw = Join-Path (Split-Path $py) 'pythonw.exe'   # no console window",
   "$exe = if (Test-Path $pyw) { $pyw } else { $py }",
-  "$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse once --quiet'",
-  "$trg = New-ScheduledTaskTrigger -Daily -At '12:30'",
-  "Register-ScheduledTask -TaskName 'Meterhouse Daily Catch-up' -Action $act -Trigger $trg -Force",
+  "Start-Process -FilePath $exe -ArgumentList '-m meterhouse daemon' -WindowStyle Hidden",
 ].join("\n");
+
+/** Keeps the agent running across reboots and relaunches it if it ever dies —
+ * every relaunch attempt while one is already running exits in milliseconds,
+ * which is what makes a 1-minute repeating trigger safe to register.
+ *
+ * No `-RepetitionDuration`: that's what makes the repeat indefinite.
+ * `[TimeSpan]::MaxValue` used to be passed there to mean "forever", but Task
+ * Scheduler serializes it as an ISO 8601 duration and MaxValue overflows the
+ * schema's range — the task registered but then failed to run with "The task
+ * XML contains a value which is incorrectly formatted or out of range",
+ * which is why the agent stopped surviving reboots. Omitting the parameter
+ * avoids the conversion entirely. */
+export const REGISTER_SUPERVISOR_COMMAND = [
+  "$py = (Get-Command python).Source",
+  "$pyw = Join-Path (Split-Path $py) 'pythonw.exe'",
+  "$exe = if (Test-Path $pyw) { $pyw } else { $py }",
+  "$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse daemon'",
+  "$logon = New-ScheduledTaskTrigger -AtLogOn",
+  "$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)",
+  // Elevated -> a real SYSTEM principal, so the task runs machine-wide with
+  // no login required. Not elevated -> no -Principal at all, which lets
+  // Register-ScheduledTask default to this process's own token; passing an
+  // explicit Principal (even one asking for no more than that token already
+  // has) routes registration through a code path that needs elevation and
+  // fails with "Access is denied" without it.
+  "$isElevated = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+  "if ($isElevated) {",
+  "  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest",
+  "  Register-ScheduledTask -TaskName 'Meterhouse Agent' -Action $act -Trigger @($logon, $repeat) -Principal $principal -Force",
+  "} else {",
+  "  Register-ScheduledTask -TaskName 'Meterhouse Agent' -Action $act -Trigger @($logon, $repeat) -Force",
+  "}",
+  "Get-ScheduledTask -TaskName 'Meterhouse Agent'   # verify it actually registered",
+].join("\n");
+
+/** Shows whether the agent is currently running and what it last reported —
+ * the one command to run when a PC is not reporting. */
+export const STATUS_COMMAND = "python -m meterhouse status";
+
+/** Stops a locally running agent (the scheduled task relaunches it within
+ * about a minute unless it has also been removed). */
+export const STOP_COMMAND = "python -m meterhouse stop";
 
 export function fullSetupBlock(opts: {
   server: string;
@@ -102,14 +139,8 @@ export function fullSetupBlock(opts: {
     `# 1 — Install agent (once per PC)`,
     install,
     ``,
-    `# 2 — Connect this PC (once)`,
-    registerCommand(opts.server, opts.apiKey, opts.displayName),
-    ``,
-    `# 3 — Scan local transcripts and send to dashboard`,
-    scanSyncCommands(),
-    ``,
-    `# 4 — Start and stop with your Claude Code sessions`,
-    INSTALL_HOOKS_COMMAND,
+    `# 2 — Connect this PC: register + scan + sync + start + supervise, one command`,
+    connectCommand(opts.server, opts.apiKey, opts.displayName),
   ].join("\n");
 }
 
@@ -144,11 +175,9 @@ export function clearStashedConnect(): void {
 }
 
 /**
- * Run the agent in the foreground to watch it work.
- *
- * It scans while a Claude Code session is open and exits on its own when the
- * last one ends — so this is a diagnostic, not the way to keep a PC reporting.
- * The hooks do that. (`--always-on` restores the old run-forever behaviour for
- * machines whose settings.json is locked down by policy.)
+ * Run the agent in the foreground to watch it work — useful for diagnosing a
+ * PC that is not reporting. It scans continuously until you close the window
+ * or stop it; the scheduled task (`REGISTER_SUPERVISOR_COMMAND`) is what keeps
+ * it running unattended afterward.
  */
 export const DAEMON_COMMAND = "python -m meterhouse daemon";

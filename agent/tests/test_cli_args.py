@@ -76,36 +76,20 @@ class TestRegisterRejectsNonUrls:
 
 
 class TestNewSubcommands:
-    """The hook entry point is wired into settings.json, so its argument
-    contract is what Claude Code depends on."""
+    """The always-on daemon and its local control commands."""
 
-    def test_hook_accepts_each_event(self):
+    def test_daemon_takes_display_name_only(self):
         from meterhouse.cli import build_parser
 
         parser = build_parser()
-        for event in ("session-start", "session-end", "keepalive"):
-            assert parser.parse_args(["hook", event]).event == event
+        args = parser.parse_args(["daemon", "--display-name", "PC-01"])
+        assert args.display_name == "PC-01"
 
-    def test_hook_rejects_an_unknown_event(self):
-        import pytest
-
-        from meterhouse.cli import build_parser
-
-        with pytest.raises(SystemExit):
-            build_parser().parse_args(["hook", "not-an-event"])
-
-    def test_daemon_takes_always_on(self):
+    def test_lifecycle_commands_exist(self):
         from meterhouse.cli import build_parser
 
         parser = build_parser()
-        assert parser.parse_args(["daemon"]).always_on is False
-        assert parser.parse_args(["daemon", "--always-on"]).always_on is True
-
-    def test_hook_management_commands_exist(self):
-        from meterhouse.cli import build_parser
-
-        parser = build_parser()
-        for name in ("install-hooks", "uninstall-hooks", "sessions"):
+        for name in ("status", "stop", "health"):
             assert parser.parse_args([name]).func is not None
 
 

@@ -9,24 +9,38 @@
 Local mode needs no central server. Central-mode commands (register/sync/
 heartbeat) push usage to a central dashboard; see `--help` for each.
 
-`install-hooks` is the normal way to run the agent in the background: it wires
-Claude Code's session hooks so the daemon starts with a session and exits when
-the last one ends, leaving no process behind on an idle machine.
+`daemon` is the agent's normal running state: it scans continuously (default
+every 5s, configurable via runtime.json, METERHOUSE_* env vars, or a remote
+`set_config` command), independent of whether Claude Code is open, and if
+configured holds a WebSocket open for real-time status push. It is launched
+once — by `install.ps1`, or by hand — and kept alive by an OS-level scheduled
+task that repeatedly (and harmlessly, if one is already running) tries to
+start one; see `deploy/install.ps1`.
 
-`daemon` is what those hooks launch: it scans on a timer (default 60s,
-configurable via runtime.json or METERHOUSE_* env vars) for as long as a
-session is open, and if configured holds a WebSocket open for real-time status
-push. `sessions` shows what it thinks is live; `health` reports its last-known
-state.
+`status` shows whether a daemon is currently running and its last-known
+state; `stop` ends a running daemon (the scheduled task relaunches it within
+about a minute, unless you also remove that task); `health` reports the
+daemon's full diagnostics snapshot.
+
+`connect` is every setup step collapsed into one command: register with the
+central server, do an initial scan + sync, start the daemon, and (on
+Windows) register the scheduled task that keeps it running across reboots.
+It's what `deploy/install.ps1` and the dashboard's "Connect a PC" flow both
+do under the hood, exposed directly for anyone installing the package by
+hand.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 from datetime import date, datetime, timezone
 
 from . import __version__
+
+log = logging.getLogger(__name__)
 from .account import collect_account_report
 from .config import AgentConfig
 from .identity import load_identity, save_identity
@@ -47,12 +61,13 @@ def _row_cost(r) -> float:
 
 
 def _active_session_count() -> int:
-    """Claude Code sessions live on this machine right now."""
-    from .sessions import SessionRegistry
+    """Claude Code sessions live on this machine right now, approximated from
+    recent transcript activity — see `activity.count_recent`."""
+    from .activity import ActivityWatcher, count_recent
 
     try:
         cfg = AgentConfig.load().validated()
-        return len(SessionRegistry().active(cfg.session_idle_timeout_seconds))
+        return count_recent(ActivityWatcher().snapshot(), cfg.session_idle_timeout_seconds)
     except Exception:  # noqa: BLE001 - a status field is never worth an error
         return 0
 
@@ -302,7 +317,7 @@ def cmd_heartbeat(args):
         print(f"Heartbeat failed (offline?): {e}")
 
 
-def _report_account(client, cfg, verbose=True):
+def _report_account(client, cfg, verbose=True, force=False):
     """Push the Claude account report, if the operator turned it on.
 
     Previously only the daemon did this, so anyone driving the agent by hand
@@ -310,16 +325,24 @@ def _report_account(client, cfg, verbose=True):
     then saw the dashboard's Claude accounts page stay permanently empty —
     with nothing to explain the gap. Reporting on sync closes that.
 
+    `force` bypasses the enabled check for one call — used by the
+    `refresh_data` command, which explicitly asks for a fresh account read
+    regardless of the normal opt-in/cadence.
+
     Optional extra: every failure is swallowed. A usage push must never be
     reported as failed because this part didn't work.
     """
-    if not cfg.account_reporting_enabled:
+    if not (cfg.account_reporting_enabled or force):
         return
     from .account import collect_account_report
     from .sync import SyncError
 
     try:
         payload = collect_account_report(enabled=True)
+        from .watcher import validate_account_report
+        for issue in validate_account_report(payload):
+            if verbose:
+                print(f"Account report validation issue: {issue}")
         if payload is None:
             if verbose:
                 print("Account reporting is on, but no Claude account was found "
@@ -351,7 +374,7 @@ def _run_pending_commands(client, commands, system_id, db_path=None, verbose=Tru
     """
     from .config import AgentConfig
     from .scanner import scan as run_scan
-    from .sync import SyncError
+    from .sync import SyncError, sync_store
 
     for command in commands or []:
         command_id = command.get("id")
@@ -370,8 +393,32 @@ def _run_pending_commands(client, commands, system_id, db_path=None, verbose=Tru
                 # here than it did there.
                 applied = AgentConfig.load().apply_patch(payload)
                 detail = f"applied: {', '.join(applied)}" if applied else "no recognized fields"
-            elif action in ("pause", "resume"):
-                status, detail = "skipped", f"{action} needs the daemon; this is a one-shot sync"
+            elif action in ("pause", "resume", "stop", "restart"):
+                # These all govern a running daemon loop or process this
+                # one-shot run does not have — nothing to pause/stop/restart.
+                status, detail = "skipped", f"{action} needs a running daemon; this is a one-shot run"
+            elif action == "force_sync":
+                store = Store(db_path or default_db_path())
+                try:
+                    totals = sync_store(store, client, verbose=False)
+                finally:
+                    store.close()
+                detail = f"synced {totals['inserted']} new / {totals['duplicates']} dup"
+            elif action == "refresh_data":
+                summary = run_scan(system_id=system_id, db_path=db_path, verbose=False)
+                cfg = AgentConfig.load()
+                _report_account(client, cfg, verbose=False, force=True)
+                detail = f"scanned {summary.get('events_inserted', 0)} new events, account refresh forced"
+            elif action == "health_check":
+                from .health import HealthState
+
+                state = HealthState.load()
+                if state is None:
+                    status, detail = "skipped", "no daemon health state on this machine"
+                else:
+                    from dataclasses import asdict
+                    client.report_health(asdict(state))
+                    detail = "health snapshot sent"
             else:
                 status, detail = "failed", f"unknown action '{action}'"
         except Exception as exc:  # noqa: BLE001 - report it, never fail the sync
@@ -442,100 +489,230 @@ def cmd_once(args):
 
 def cmd_daemon(args):
     from .daemon import run_daemon
-    run_daemon(display_name=args.display_name, db_path=args.db,
-               always_on=True if args.always_on else None)
+    run_daemon(display_name=args.display_name, db_path=args.db)
 
 
-def cmd_hook(args):
-    """Run a Claude Code hook handler. Never prints, never fails.
+def cmd_status(args):
+    """Whether a daemon is currently running, and what it last reported.
 
-    Not intended to be run by hand — `install-hooks` wires it into
-    `~/.claude/settings.json`, and Claude Code invokes it with the event
-    payload on stdin.
+    The first thing to check when the agent should be working and isn't, or
+    is running and shouldn't be.
     """
-    from .hooks import run
-    raise SystemExit(run(args.event))
-
-
-def cmd_install_hooks(args):
-    from .hookinstall import install
-    ok, message = install()
-    print(message)
-    if ok:
-        print("The agent will now start with your next Claude Code session "
-              "and stop when it ends.")
-        # Claude Code reads its hook configuration when a session starts, not
-        # continuously — installing hooks while a session is already open (the
-        # common case, since this is usually run from inside one) does not
-        # retroactively wire that session up. Without this note, "it isn't
-        # working" is the natural first read: the exact commands above run
-        # fine by hand, `meterhouse sessions` shows the hooks installed, and
-        # still nothing happens until the running Claude Code is fully quit
-        # and reopened — a "new session" started inside the same still-running
-        # app is not enough.
-        print("If Claude Code is open right now, fully quit and reopen it — "
-              "these hooks won't take effect in a session that was already "
-              "running when they were installed.")
-    else:
-        raise SystemExit(1)
-
-
-def cmd_uninstall_hooks(args):
-    from .hookinstall import uninstall
-    ok, message = uninstall()
-    print(message)
-    if not ok:
-        raise SystemExit(1)
-
-
-def cmd_sessions(args):
-    """Show the Claude Code sessions this machine believes are live.
-
-    The first thing to check when the agent is running and shouldn't be, or
-    isn't running and should: it is the sole input to that decision.
-    """
-    from .hooks import daemon_is_running
-    from .hookinstall import status as hook_status
-    from .sessions import SessionRegistry
+    from .activity import ActivityWatcher, count_recent
+    from .lockfile import is_daemon_running, read_locked_pid
 
     cfg = AgentConfig.load().validated()
-    registry = SessionRegistry()
-    live = registry.active(cfg.session_idle_timeout_seconds)
+    running = is_daemon_running()
+    active = count_recent(ActivityWatcher().snapshot(), cfg.session_idle_timeout_seconds)
 
     print()
     _hr()
-    print("  Claude Code sessions")
+    print("  Meterhouse agent status")
     _hr()
-    if not live:
-        print("  None active. The agent is not expected to be running.")
-    for record in live:
-        idle = int(record.age_seconds())
-        print(f"  {record.session_id}")
-        print(f"    started {record.started_at}  idle {idle}s")
-        if record.cwd:
-            print(f"    cwd     {record.cwd}")
-    _hr()
-    hooks = hook_status()
-    missing = [event for event, present in hooks["events"].items() if not present]
-    if hooks["error"]:
-        print(f"  Hooks:  could not be read - {hooks['error']}")
-    elif missing:
-        print(f"  Hooks:  NOT installed ({', '.join(missing)}) - run "
-              f"`meterhouse install-hooks`")
+    if running:
+        pid = read_locked_pid()
+        print(f"  Daemon:  running{f' (pid {pid})' if pid else ''}")
     else:
-        print(f"  Hooks:  installed in {hooks['path']}")
-    print(f"  Daemon: {'running' if daemon_is_running() else 'not running'}")
-    print(f"  Idle timeout: {cfg.session_idle_timeout_seconds}s")
+        print("  Daemon:  not running")
+        print("           the scheduled task supervisor should relaunch it "
+              "within about a minute")
+    print(f"  Active transcripts (last {cfg.session_idle_timeout_seconds}s): {active}")
+    print(f"  Scan interval: {cfg.scan_interval_seconds}s   "
+          f"Sync interval: {cfg.sync_interval_seconds}s")
     _hr()
     print()
+
+
+def cmd_stop(args):
+    """Stop a locally running daemon by PID.
+
+    Distinct from the dashboard's remote `stop` Trigger command, which only
+    reaches a daemon already talking to the server — this works offline, and
+    is what local troubleshooting/uninstall needs, since a detached
+    background process has no attached terminal to interrupt.
+    """
+    import subprocess
+
+    from .lockfile import is_daemon_running, read_locked_pid
+
+    if not is_daemon_running():
+        print("No daemon is running.")
+        return
+
+    pid = read_locked_pid()
+    if pid is None:
+        print("A daemon is running, but its PID could not be read from the lock file.")
+        raise SystemExit(1)
+
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True
+        )
+        ok = result.returncode == 0
+    else:
+        import signal as signal_module
+
+        try:
+            os.kill(pid, signal_module.SIGTERM)
+            ok = True
+        except OSError as exc:
+            print(f"Could not stop pid {pid}: {exc}")
+            ok = False
+
+    if ok:
+        print(f"Stopped daemon (pid {pid}). The scheduled task will relaunch it "
+              "within about a minute, unless it has been removed.")
+    else:
+        raise SystemExit(1)
+
+
+def _register_supervisor_task() -> None:
+    """Register the Scheduled Task that relaunches the daemon if it dies.
+
+    Windows only — Task Scheduler is what makes a fire-and-forget relaunch
+    trigger safe (`run_daemon`'s single-instance lock turns every redundant
+    firing into a no-op), and there's no cross-platform equivalent to reach
+    for here. Mirrors `REGISTER_SUPERVISOR_COMMAND` in
+    `web/src/lib/agentSetup.ts` and the task `deploy/install.ps1` registers —
+    kept in sync by hand, since those are PowerShell text for a browser to
+    display and this is PowerShell actually executed here.
+
+    Deliberately no `-RepetitionDuration`: leaving it unset is what makes the
+    repeat indefinite. `[TimeSpan]::MaxValue` used to be passed there to mean
+    "forever" — it looks right, but Task Scheduler serializes triggers as an
+    ISO 8601 duration and MaxValue overflows what that format can represent.
+    `Register-ScheduledTask` did not error on it; the task simply failed
+    every time it tried to *run*, with "The task XML contains a value which
+    is incorrectly formatted or out of range" — silent at registration time,
+    which is exactly what made it easy to ship. The `Get-ScheduledTask`
+    verification below exists so a definition Task Scheduler will actually
+    reject shows up here as a failure, not as a task that "registered fine"
+    and then quietly never restarted anything.
+    """
+    import subprocess
+
+    from .daemon import daemon_command
+
+    command = daemon_command()
+    if not command:
+        print("Could not determine how to relaunch the daemon; skipping scheduled task.")
+        return
+
+    exe, rest = command[0], command[1:]
+    script = (
+        f"$act = New-ScheduledTaskAction -Execute '{exe}' -Argument '{' '.join(rest)}'; "
+        "$logon = New-ScheduledTaskTrigger -AtLogOn; "
+        "$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date) "
+        "-RepetitionInterval (New-TimeSpan -Minutes 1); "
+        # Elevated -> a real SYSTEM principal, so the task runs machine-wide
+        # with no login required. Not elevated -> no -Principal at all,
+        # letting Register-ScheduledTask default to this process's own token
+        # — passing an explicit Principal (even asking for no more than that
+        # token already has) routes registration through a code path that
+        # needs elevation and fails with "Access is denied" without it.
+        "$isElevated = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent())"
+        ".IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); "
+        "if ($isElevated) { "
+        "$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest; "
+        "Register-ScheduledTask -TaskName 'Meterhouse Agent' -Action $act "
+        "-Trigger @($logon, $repeat) -Principal $principal -Force | Out-Null "
+        "} else { "
+        "Register-ScheduledTask -TaskName 'Meterhouse Agent' -Action $act "
+        "-Trigger @($logon, $repeat) -Force | Out-Null "
+        "}; "
+        "$t = Get-ScheduledTask -TaskName 'Meterhouse Agent' -ErrorAction Stop; "
+        "if ($t.State -eq 'Disabled') { throw 'Task registered but is Disabled' }; "
+        "Write-Output \"VERIFIED:$(if ($isElevated) {'machine-wide'} else {'per-user'}):$($t.State)\""
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True,
+        )
+    except OSError as exc:
+        print(f"Could not run PowerShell to register the scheduled task: {exc!r} "
+              f"(is powershell.exe on PATH?)")
+        return
+
+    log.info(
+        "scheduled task registration",
+        extra={
+            "command": ["powershell", "-Command", script],
+            "exit_code": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        },
+    )
+    if result.returncode == 0 and "VERIFIED:" in result.stdout:
+        scope, _, state = result.stdout.strip().rsplit("VERIFIED:", 1)[-1].partition(":")
+        print(f"Scheduled task 'Meterhouse Agent' registered and verified "
+              f"(scope: {scope}, state: {state}) — the daemon now survives reboots.")
+    else:
+        # PowerShell surfaces Win32 errors (e.g. "Access is denied") in
+        # stderr via the exception's own message; nothing to translate here
+        # beyond showing the exit code and the exact text PowerShell gave.
+        print(f"Could not register the scheduled task automatically "
+              f"(exit code {result.returncode}): {result.stderr.strip() or result.stdout.strip()}")
+        print("Retry from an elevated ('Run as Administrator') shell for a machine-wide task, "
+              "or see agent/README.md §6 to register one yourself.")
+
+
+def cmd_connect(args):
+    """One command, every setup step: register, scan, sync, start the
+    daemon, and (on Windows) register the scheduled task that keeps it
+    running across reboots.
+
+    Runs the same steps `deploy/install.ps1` and the dashboard's "Connect a
+    PC" block do, in order, so a plain `pip install meterhouse-rotor` +
+    `meterhouse connect ...` is a complete, working setup by itself.
+    """
+    from .daemon import daemon_command, spawn_detached
+    from .lockfile import is_daemon_running
+
+    print("\n[1/4] Registering with the central server...")
+    cmd_register(argparse.Namespace(
+        server=args.server, api_key=args.api_key,
+        display_name=args.display_name, ws_url=args.ws_url,
+    ))
+
+    if args.account:
+        cfg = AgentConfig.load()
+        cfg.account_reporting_enabled = True
+        cfg.save()
+        print("Claude account reporting is now ENABLED.")
+
+    print("\n[2/4] Scanning local transcripts and syncing to the dashboard...")
+    cmd_scan(argparse.Namespace(display_name=args.display_name, db=args.db,
+                                 quiet=args.quiet), report_finished=False)
+    cmd_sync(argparse.Namespace(db=args.db, quiet=args.quiet))
+
+    print("\n[3/4] Starting the agent...")
+    if is_daemon_running():
+        print("A daemon is already running on this machine.")
+    else:
+        command = daemon_command()
+        if command and spawn_detached(command):
+            print("Daemon started.")
+        else:
+            print("Could not start the daemon automatically; run `meterhouse daemon` by hand.")
+
+    print("\n[4/4] Keeping it running across reboots...")
+    if os.name == "nt":
+        _register_supervisor_task()
+    else:
+        print("No scheduled-task equivalent is wired up on this OS yet — keep the "
+              "daemon alive yourself (e.g. systemd/launchd), or re-run "
+              "`meterhouse connect` after each reboot.")
+
+    print("\nConnected. Run `meterhouse status` any time to check on it.\n")
 
 
 def cmd_health(args):
     from .health import HealthState
     state = HealthState.load()
     if state is None:
-        print("No daemon health data yet. The agent runs only during a Claude Code "
-              "session — run `meterhouse install-hooks`, then start one.")
+        print("No daemon health data yet. Run `meterhouse daemon` (or wait for "
+              "the scheduled task to start one).")
         return
     print()
     _hr()
@@ -674,35 +851,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     dm = sub.add_parser(
         "daemon",
-        help="scan while a Claude Code session is open, then exit "
-             "(config: runtime.json) + optional real-time push",
+        help="scan continuously (config: runtime.json) + optional real-time push",
     )
     dm.add_argument("--display-name", default=None)
-    dm.add_argument(
-        "--always-on",
-        action="store_true",
-        help="never exit when sessions end (for machines that cannot use hooks)",
-    )
     dm.set_defaults(func=cmd_daemon)
 
-    hk = sub.add_parser("hook", help="internal: Claude Code hook handler")
-    hk.add_argument("event", choices=["session-start", "session-end", "keepalive"])
-    hk.set_defaults(func=cmd_hook)
+    sub.add_parser(
+        "status", help="is a daemon running, and what does it last report"
+    ).set_defaults(func=cmd_status)
+    sub.add_parser(
+        "stop", help="stop a locally running daemon (the scheduled task relaunches it)"
+    ).set_defaults(func=cmd_stop)
 
-    sub.add_parser(
-        "install-hooks",
-        help="start/stop the agent automatically with your Claude Code sessions",
-    ).set_defaults(func=cmd_install_hooks)
-    sub.add_parser(
-        "uninstall-hooks", help="remove the Claude Code hooks this agent installed"
-    ).set_defaults(func=cmd_uninstall_hooks)
-    sub.add_parser(
-        "sessions", help="show live Claude Code sessions, hook and daemon state"
-    ).set_defaults(func=cmd_sessions)
-
-    sub.add_parser("health", help="show the daemon's last-known status").set_defaults(
+    sub.add_parser("health", help="show the daemon's full diagnostics snapshot").set_defaults(
         func=cmd_health
     )
+
+    cn = sub.add_parser(
+        "connect",
+        help="one command: register + scan + sync + start daemon "
+             "(+ scheduled task on Windows)",
+    )
+    cn.add_argument("--server", required=True, help="central API base URL")
+    cn.add_argument("--api-key", required=True, help="agent API key (from admin)")
+    cn.add_argument("--display-name", default=None)
+    cn.add_argument("--ws-url", default=None,
+                    help="enable real-time push over this WebSocket URL (optional)")
+    cn.add_argument("--account", action="store_true",
+                    help="also enable Claude account reporting")
+    cn.add_argument("--quiet", action="store_true")
+    cn.set_defaults(func=cmd_connect)
+
     return p
 
 

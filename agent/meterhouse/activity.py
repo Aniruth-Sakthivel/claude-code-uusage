@@ -22,6 +22,7 @@ back an unchanged timestamp for a file that has grown.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,3 +75,17 @@ class ActivityWatcher:
         twice — the scan already ingested it."""
         self._seen = self.snapshot()
         self._primed = True
+
+
+def count_recent(snapshot: dict, idle_timeout_seconds: float, now: float | None = None) -> int:
+    """How many transcripts in a `snapshot()` were touched within the window.
+
+    The "active sessions" proxy for the always-on daemon: with no Claude Code
+    hooks feeding a session registry, a recently-modified transcript is the
+    best available signal that someone is actively working. It undercounts
+    two windows on the same project's transcript as one — an accepted
+    tradeoff for not depending on hooks at all.
+    """
+    now_ns = (now if now is not None else time.time()) * 1_000_000_000
+    window_ns = idle_timeout_seconds * 1_000_000_000
+    return sum(1 for mtime_ns, _size in snapshot.values() if now_ns - mtime_ns <= window_ns)

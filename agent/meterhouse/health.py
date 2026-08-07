@@ -14,6 +14,7 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import ClassVar
 
 
 def default_health_path() -> Path:
@@ -49,6 +50,14 @@ class HealthState:
     #: event-driven model depends on, since silence is now the normal state.
     stopped_at: str | None = None
     pid: int = field(default_factory=os.getpid)
+    #: Findings from the agent's own data-validation checks (see watcher.py) —
+    #: missing/invalid account fields, sync count mismatches, stale sessions,
+    #: etc. Capped so a persistently misbehaving check can't grow this file
+    #: without bound; the newest issues are the ones worth seeing.
+    validation_issues: list[str] = field(default_factory=list)
+
+    #: `validation_issues` beyond this count are dropped, oldest first.
+    MAX_VALIDATION_ISSUES: ClassVar[int] = 10
 
     def touch(self) -> None:
         """Mark the process as alive without changing any counter.
@@ -87,6 +96,13 @@ class HealthState:
 
     def record_ws_reconnect_attempt(self) -> None:
         self.ws_reconnect_attempts += 1
+        self.updated_at = _now()
+
+    def record_validation_issue(self, issue: str) -> None:
+        """Append a watcher.py finding, keeping only the most recent ones."""
+        self.validation_issues.append(issue)
+        if len(self.validation_issues) > self.MAX_VALIDATION_ISSUES:
+            self.validation_issues = self.validation_issues[-self.MAX_VALIDATION_ISSUES :]
         self.updated_at = _now()
 
     def save(self, path: Path | None = None) -> None:

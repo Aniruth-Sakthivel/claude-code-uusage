@@ -60,13 +60,32 @@ export const systemCreated = z.object({
   api_key: z.string(),
 });
 
+export const systemUpdate = z.object({
+  display_name: z.string().min(1).max(120).optional(),
+  owner: z.string().max(120).optional(),
+  location: z.string().max(120).optional(),
+  environment: z.string().max(40).optional(),
+  notes: z.string().optional(),
+});
+
 // ── agent commands (fleet management) ─────────────────────────────────────────
-export const commandAction = z.enum(["scan_now", "pause", "resume", "set_config"]);
+export const commandAction = z.enum([
+  "scan_now",
+  "pause",
+  "resume",
+  "set_config",
+  "stop",
+  "force_sync",
+  "refresh_data",
+  "restart",
+  "health_check",
+]);
 
 /** Only the tunables it's safe for an operator to push remotely. */
 export const commandSetConfigPayload = z
   .object({
     scan_interval_seconds: z.number().int().min(5).max(86_400).optional(),
+    sync_interval_seconds: z.number().int().min(5).max(3_600).optional(),
     ws_enabled: z.boolean().optional(),
     session_titles_enabled: z.boolean().optional(),
     account_reporting_enabled: z.boolean().optional(),
@@ -128,6 +147,55 @@ export const agentStatusRequest = z.object({
   last_scan_duration_ms: z.number().min(0).max(86_400_000).nullish(),
   /** Claude Code sessions live on that machine when it reported. */
   active_sessions: z.number().int().min(0).max(10_000).nullish(),
+});
+
+/**
+ * Full local diagnostics snapshot — distinct from `agentStatusRequest`, which
+ * fires on every state transition and must stay cheap. This is the complete
+ * picture, sent rarely (every ~10th health-loop tick, or on demand via the
+ * `health_check` command), so the shape can afford to be wide.
+ *
+ * Every field optional/defaulted for the same reason as `agentStatusRequest`:
+ * an older agent's payload must still validate.
+ */
+export const agentHealthReport = z.object({
+  started_at: z.string().datetime({ offset: true }).nullish(),
+  updated_at: z.string().datetime({ offset: true }).nullish(),
+  last_scan_at: z.string().datetime({ offset: true }).nullish(),
+  last_scan_duration_ms: z.number().min(0).max(86_400_000).nullish(),
+  last_scan_error: z.string().max(2000).nullish(),
+  scans_completed: z.number().int().min(0).default(0),
+  scans_failed: z.number().int().min(0).default(0),
+  ws_connected: z.boolean().default(false),
+  ws_last_connected_at: z.string().datetime({ offset: true }).nullish(),
+  ws_last_disconnect_reason: z.string().max(255).nullish(),
+  ws_reconnect_attempts: z.number().int().min(0).default(0),
+  offline_queue_depth: z.number().int().min(0).default(0),
+  active_sessions: z.number().int().min(0).max(10_000).default(0),
+  pid: z.number().int().nullish(),
+  /** Findings from the agent's own data-validation checks (watcher.py) —
+   * missing/invalid fields, sync count mismatches, stale sessions, etc. */
+  validation_issues: z.array(z.string().max(500)).max(20).default([]),
+});
+
+export const agentHealthOut = z.object({
+  system_id: z.string(),
+  started_at: z.string().nullable(),
+  updated_at: z.string().nullable(),
+  last_scan_at: z.string().nullable(),
+  last_scan_duration_ms: z.number().nullable(),
+  last_scan_error: z.string().nullable(),
+  scans_completed: z.number(),
+  scans_failed: z.number(),
+  ws_connected: z.boolean(),
+  ws_last_connected_at: z.string().nullable(),
+  ws_last_disconnect_reason: z.string().nullable(),
+  ws_reconnect_attempts: z.number(),
+  offline_queue_depth: z.number(),
+  active_sessions: z.number(),
+  pid: z.number().nullable(),
+  validation_issues: z.array(z.string()),
+  recorded_at: z.string().nullable(),
 });
 
 // ── agent endpoints ───────────────────────────────────────────────────────────

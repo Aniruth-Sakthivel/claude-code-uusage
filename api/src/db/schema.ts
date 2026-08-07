@@ -276,7 +276,8 @@ export const agentCommands = pgTable(
     systemId: varchar("system_id", { length: 64 })
       .notNull()
       .references(() => systems.systemId, { onDelete: "cascade" }),
-    action: varchar("action", { length: 32 }).notNull(), // scan_now | pause | resume | set_config
+    // scan_now | pause | resume | set_config | stop | force_sync | refresh_data | restart | health_check
+    action: varchar("action", { length: 32 }).notNull(),
     payload: text("payload").notNull().default("{}"), // JSON, shape depends on action
     status: varchar("status", { length: 16 }).notNull().default("pending"), // pending | acked | failed
     createdByUserId: integer("created_by_user_id").references(() => users.id, {
@@ -292,6 +293,39 @@ export const agentCommands = pgTable(
     index("agent_commands_system_status_idx").on(t.systemId, t.status),
   ],
 );
+
+// ── agent health snapshots (watcher diagnostics) ────────────────────────────────
+/**
+ * The agent's full local diagnostics snapshot (`HealthState` in
+ * `agent/meterhouse/health.py`), pushed rarely — every ~10th health-loop tick,
+ * or on demand via the `health_check` command — as opposed to `systems.agentStatus`
+ * and friends, which are a curated subset pushed on every scan-state transition.
+ *
+ * One row per system, upserted in place: the agent itself has no history
+ * concept (`health.json` is a single-row-overwrite file), so this mirrors
+ * that rather than inventing a history table nothing populates meaningfully.
+ */
+export const agentHealthSnapshots = pgTable("agent_health_snapshots", {
+  systemId: varchar("system_id", { length: 64 })
+    .primaryKey()
+    .references(() => systems.systemId, { onDelete: "cascade" }),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+  lastScanAt: timestamp("last_scan_at", { withTimezone: true }),
+  lastScanDurationMs: integer("last_scan_duration_ms"),
+  lastScanError: text("last_scan_error").notNull().default(""),
+  scansCompleted: integer("scans_completed").notNull().default(0),
+  scansFailed: integer("scans_failed").notNull().default(0),
+  wsConnected: boolean("ws_connected").notNull().default(false),
+  wsLastConnectedAt: timestamp("ws_last_connected_at", { withTimezone: true }),
+  wsLastDisconnectReason: text("ws_last_disconnect_reason").notNull().default(""),
+  wsReconnectAttempts: integer("ws_reconnect_attempts").notNull().default(0),
+  offlineQueueDepth: integer("offline_queue_depth").notNull().default(0),
+  activeSessions: integer("active_sessions").notNull().default(0),
+  pid: integer("pid"),
+  validationIssues: text("validation_issues").notNull().default("[]"), // JSON array of strings
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ── initiatives (project management) ──────────────────────────────────────────
 /**
@@ -996,6 +1030,7 @@ export type NewUsageEvent = typeof usageEvents.$inferInsert;
 export type EnrollTokenRow = typeof enrollTokens.$inferSelect;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type AgentCommandRow = typeof agentCommands.$inferSelect;
+export type AgentHealthSnapshotRow = typeof agentHealthSnapshots.$inferSelect;
 export type InitiativeRow = typeof initiatives.$inferSelect;
 export type MilestoneRow = typeof milestones.$inferSelect;
 export type TaskRow = typeof tasks.$inferSelect;

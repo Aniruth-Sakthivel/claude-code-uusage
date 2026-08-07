@@ -74,6 +74,22 @@ export interface SystemCreated {
   api_key: string;
 }
 
+export interface CreateSystemPayload {
+  display_name: string;
+  owner?: string;
+  location?: string;
+  environment?: string;
+  notes?: string;
+}
+
+export interface UpdateSystemPayload {
+  display_name?: string;
+  owner?: string;
+  location?: string;
+  environment?: string;
+  notes?: string;
+}
+
 // ── project management (initiatives) ────────────────────────────────────────────
 export type InitiativeStatus = "active" | "on_hold" | "completed" | "archived";
 export type TaskStatus = "todo" | "in_progress" | "done";
@@ -247,11 +263,21 @@ export interface PmActivityEntry {
 }
 
 // ── fleet management (agent commands) ──────────────────────────────────────────
-export type CommandAction = "scan_now" | "pause" | "resume" | "set_config";
+export type CommandAction =
+  | "scan_now"
+  | "pause"
+  | "resume"
+  | "set_config"
+  | "stop"
+  | "force_sync"
+  | "refresh_data"
+  | "restart"
+  | "health_check";
 
 /** Only the tunables it's safe to push remotely — mirrors the server allowlist. */
 export interface SetConfigPayload {
   scan_interval_seconds?: number;
+  sync_interval_seconds?: number;
   ws_enabled?: boolean;
   session_titles_enabled?: boolean;
   account_reporting_enabled?: boolean;
@@ -262,11 +288,32 @@ export interface AgentCommand {
   system_id: string;
   action: CommandAction;
   payload: SetConfigPayload;
-  status: "pending" | "acked" | "failed";
+  status: "pending" | "acked" | "failed" | "skipped";
   created_at: string;
   delivered_at: string | null;
   acked_at: string | null;
   ack_detail: string;
+}
+
+/** Full local diagnostics snapshot — mirrors `agentHealthOut` server-side. */
+export interface AgentHealthSnapshot {
+  system_id: string;
+  started_at: string | null;
+  updated_at: string | null;
+  last_scan_at: string | null;
+  last_scan_duration_ms: number | null;
+  last_scan_error: string | null;
+  scans_completed: number;
+  scans_failed: number;
+  ws_connected: boolean;
+  ws_last_connected_at: string | null;
+  ws_last_disconnect_reason: string | null;
+  ws_reconnect_attempts: number;
+  offline_queue_depth: number;
+  active_sessions: number;
+  pid: number | null;
+  validation_issues: string[];
+  recorded_at: string | null;
 }
 
 export interface RankingItem {

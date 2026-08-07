@@ -5,7 +5,8 @@ from meterhouse.config import AgentConfig
 
 def test_defaults_when_no_file(tmp_path):
     cfg = AgentConfig.load(tmp_path / "missing.json")
-    assert cfg.scan_interval_seconds == 60
+    assert cfg.scan_interval_seconds == 5
+    assert cfg.sync_interval_seconds == 20
     assert cfg.ws_enabled is False
 
 
@@ -24,7 +25,7 @@ def test_corrupt_file_falls_back_to_defaults(tmp_path):
     path = tmp_path / "runtime.json"
     path.write_text("{not valid json", encoding="utf-8")
     cfg = AgentConfig.load(path)
-    assert cfg.scan_interval_seconds == 60
+    assert cfg.scan_interval_seconds == 5
 
 
 def test_unknown_keys_in_file_are_ignored(tmp_path):
@@ -45,7 +46,7 @@ def test_env_override_wins_over_file(tmp_path, monkeypatch):
 def test_malformed_env_override_is_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv("METERHOUSE_SCAN_INTERVAL", "not-a-number")
     cfg = AgentConfig.load(tmp_path / "missing.json")
-    assert cfg.scan_interval_seconds == 60
+    assert cfg.scan_interval_seconds == 5
 
 
 def test_validated_clamps_out_of_range_values():
@@ -56,24 +57,29 @@ def test_validated_clamps_out_of_range_values():
     assert cfg.log_level == "INFO"
 
 
-# ── session lifecycle knobs ───────────────────────────────────────────────────
+def test_sync_interval_env_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("METERHOUSE_SYNC_INTERVAL", "45")
+    cfg = AgentConfig.load(tmp_path / "missing.json")
+    assert cfg.sync_interval_seconds == 45
+
+
+def test_sync_interval_never_validated_faster_than_scan_interval():
+    cfg = AgentConfig(scan_interval_seconds=30, sync_interval_seconds=5).validated()
+    assert cfg.sync_interval_seconds == 30
+
+
+# ── activity/idle knobs ────────────────────────────────────────────────────────
 
 
 def test_session_lifecycle_defaults(tmp_path):
     cfg = AgentConfig.load(tmp_path / "missing.json")
     assert cfg.session_idle_timeout_seconds == 300
-    assert cfg.shutdown_grace_seconds == 20
-    assert cfg.always_on is False
 
 
 def test_session_lifecycle_env_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("METERHOUSE_SESSION_IDLE_TIMEOUT", "120")
-    monkeypatch.setenv("METERHOUSE_SHUTDOWN_GRACE", "5")
-    monkeypatch.setenv("METERHOUSE_ALWAYS_ON", "true")
     cfg = AgentConfig.load(tmp_path / "missing.json")
     assert cfg.session_idle_timeout_seconds == 120
-    assert cfg.shutdown_grace_seconds == 5
-    assert cfg.always_on is True
 
 
 def test_idle_timeout_has_a_floor():

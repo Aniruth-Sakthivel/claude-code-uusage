@@ -6,9 +6,9 @@
  *
  * Now: the user clicks "Connect this PC" and copies a single line. That line
  * fetches a generated PowerShell script which installs the agent, registers it,
- * runs the first scan and sync, and wires Claude Code's session hooks so the
- * agent starts and stops with the user's sessions. After that the dashboard
- * updates itself.
+ * runs the first scan and sync, and starts it as a persistent background
+ * process — no Claude Code session hooks, scanning continuously regardless of
+ * whether Claude Code is open. After that the dashboard updates itself.
  *
  * Why a token instead of the key in the URL: the command is pasted into a
  * terminal and lands in shell history and possibly logs. The enrollment token is
@@ -344,13 +344,14 @@ function manualSetupBlock(
    * cmd.exe and PowerShell alike with no PATH surgery. `pip` itself lives in
    * that same Scripts directory, so it gets the same treatment.
    */
-  const registerArgs = [
-    "python -m meterhouse register",
+  const connectArgs = [
+    "python -m meterhouse connect",
     `--server ${pwshQuote(server)}`,
     `--api-key ${pwshQuote(apiKey)}`,
     `--display-name ${pwshQuote(displayName)}`,
+    "--account",
   ];
-  if (wsUrl) registerArgs.push(`--ws-url ${pwshQuote(wsUrl)}`);
+  if (wsUrl) connectArgs.push(`--ws-url ${pwshQuote(wsUrl)}`);
 
   return [
     "# Run these in PowerShell. (In cmd.exe the single quotes below are NOT",
@@ -360,45 +361,15 @@ function manualSetupBlock(
     "# 1 - install the agent (once per PC)",
     "python -m pip install --upgrade meterhouse-rotor",
     "",
-    "# 2 - connect this PC (once)",
-    registerArgs.join(" "),
+    "# 2 - connect this PC: registers, runs the first scan + sync, shares",
+    "#     Claude account + plan + rate-limit usage (--account), starts the",
+    "#     agent, and (on Windows) registers the scheduled task that keeps it",
+    "#     running across reboots and self-heals if it ever dies. One command,",
+    "#     nothing else to run afterward.",
+    connectArgs.join(" "),
     "",
-    "# 3 - scan local transcripts and send to the dashboard",
-    "python -m meterhouse scan",
-    "python -m meterhouse sync",
-    "",
-    "# 4 - OPTIONAL: report Claude account + rate-limit usage to the",
-    "#     dashboard's 'Claude accounts' page. Off by default. 'show' prints the",
-    "#     exact payload first - credentials and OAuth tokens are never read.",
-    "python -m meterhouse account show",
-    "python -m meterhouse account enable",
-    "python -m meterhouse sync          # the account report goes out with a sync",
-    "",
-    "# 5 - keep it updating on its own.",
-    "",
-    "#   (a) The normal way: let Claude Code start and stop the agent for you.",
-    "#       This writes three hooks into ~/.claude/settings.json (your own",
-    "#       hooks are preserved). The agent then runs only while a session is",
-    "#       open - no background process at all on an idle PC, and nothing",
-    "#       polling on a timer.",
-    "python -m meterhouse install-hooks",
-    "python -m meterhouse sessions      # what is live, and whether hooks are set",
-    "",
-    "#   (b) A daily catch-up, in case hook installation ever fails silently.",
-    "#       `once` is a single command on purpose: chaining scan && sync inside",
-    "#       a task action needs nested quoting that frequently registers a task",
-    "#       which never actually runs.",
-    "$py = (Get-Command python).Source",
-    "$pyw = Join-Path (Split-Path $py) 'pythonw.exe'   # no console window",
-    "$exe = if (Test-Path $pyw) { $pyw } else { $py }",
-    "$act = New-ScheduledTaskAction -Execute $exe -Argument '-m meterhouse once --quiet'",
-    "$trg = New-ScheduledTaskTrigger -Daily -At '12:30'",
-    "Register-ScheduledTask -TaskName 'Meterhouse Daily Catch-up' -Action $act -Trigger $trg -Force",
-    "",
-    "#   (c) Run the agent by hand to watch what it does. It scans every 60s",
-    "#       while a Claude Code session is open, then exits on its own.",
-    "#       Add --always-on for a PC that cannot use hooks at all.",
-    "python -m meterhouse daemon",
+    "# Check whether it's running, and what it last reported:",
+    "python -m meterhouse status",
     "",
     "# Optional: if you would rather type 'meterhouse' than 'python -m meterhouse',",
     "# add the user Scripts folder to PATH once, then open a new terminal:",
@@ -406,11 +377,11 @@ function manualSetupBlock(
     "#   [Environment]::SetEnvironmentVariable('Path', \"$env:Path;$s\", 'User')",
     "",
     "# --- Uninstalling this PC ---",
-    "# Remove whichever scheduled tasks exist (the last two are names used by",
-    "# older installers). Errors are harmless.",
-    "python -m meterhouse uninstall-hooks",
-    'schtasks /Delete /TN "Meterhouse Daily Catch-up" /F',
+    "# Stop the running agent and remove whichever scheduled tasks exist (older",
+    "# names included). Errors are harmless.",
+    "python -m meterhouse stop",
     'schtasks /Delete /TN "Meterhouse Agent" /F',
+    'schtasks /Delete /TN "Meterhouse Daily Catch-up" /F',
     'schtasks /Delete /TN "Meterhouse Scan+Sync" /F',
     'schtasks /Delete /TN "Meterhouse Agent Check" /F',
     'schtasks /Delete /TN "Meterhouse Daemon" /F',
@@ -448,11 +419,10 @@ export function renderInstallScript(opts: {
   return `# Meterhouse agent setup - generated for ${displayName}
 # One command does everything: installs the agent (pip), connects this PC,
 # shares Claude account + plan + rate-limit usage, sends the first scan, and
-# hands its lifecycle to Claude Code so reporting continues after this window
-# is closed and after a reboot:
-#   - session hooks start the agent when you open Claude Code and stop it when
-#     you finish, so an idle PC runs no agent process at all;
-#   - one daily catch-up scan+sync as a safety net.
+# starts the agent as a persistent background process that keeps reporting
+# after this window is closed and after a reboot - it scans continuously
+# (every 5s by default), independent of whether Claude Code is open, and a
+# scheduled task relaunches it within about a minute if it ever stops.
 # Nothing else to run afterward. Closing this window is expected and safe.
 
 $ErrorActionPreference = 'Stop'
@@ -464,11 +434,46 @@ $RepoUrl     = ${q(repoUrl)}
 $WsUrl       = ${q(wsUrl ?? "")}
 $InstallDir  = Join-Path $env:LOCALAPPDATA 'Meterhouse'
 $HealthFile  = Join-Path $env:USERPROFILE '.claude\\meterhouse\\health.json'
+$InstallLog  = Join-Path $InstallDir 'install.log'
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+# Whether this shell is running elevated (Run as Administrator). Determines
+# whether the scheduled task below can be machine-wide (runs as SYSTEM,
+# whether or not anyone is logged in) or must stay scoped to this user's own
+# security context (which every standard account can already register tasks
+# under, without any special privilege).
+$IsElevated = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# Structured step logging: every step's name, outcome, duration, and (on
+# failure) the exact exception are appended to $InstallLog as well as shown
+# on screen, so a failed install can be diagnosed from the log alone instead
+# of from whatever scrolled past in the terminal. \`\$Critical = \$false\` steps
+# (the scheduled task, the final status check) log and report a failure but
+# do not abort the rest of the install - losing crash-survival or a status
+# print is not a reason to leave the agent half-installed.
+function Write-InstallStep {
+  param([string]$Step, [scriptblock]$Action, [bool]$Critical = $true)
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    & $Action
+    $sw.Stop()
+    Add-Content -Path $InstallLog -Value ("[{0}] OK   {1} ({2}ms)" -f (Get-Date -Format 'o'), $Step, $sw.ElapsedMilliseconds)
+    Write-Host ("  [OK]   {0}" -f $Step) -ForegroundColor Green
+  } catch {
+    $sw.Stop()
+    $hresult = '0x{0:X8}' -f $_.Exception.HResult
+    Add-Content -Path $InstallLog -Value ("[{0}] FAIL {1} ({2}ms) hresult={3} - {4}" -f (Get-Date -Format 'o'), $Step, $sw.ElapsedMilliseconds, $hresult, $_.Exception.Message)
+    Write-Host ("  [FAIL] {0}: {1} ({2})" -f $Step, $_.Exception.Message, $hresult) -ForegroundColor Red
+    if ($Critical) { throw }
+  }
+}
 
 Write-Host ''
 Write-Host '=== Meterhouse setup ===' -ForegroundColor Cyan
-Write-Host ("  PC:     {0}" -f $DisplayName)
-Write-Host ("  Server: {0}" -f $Server)
+Write-Host ("  PC:        {0}" -f $DisplayName)
+Write-Host ("  Server:    {0}" -f $Server)
+Write-Host ("  Elevated:  {0}" -f $IsElevated)
+Write-Host ("  Log:       {0}" -f $InstallLog)
 Write-Host ''
 
 # --- 1. find Python ----------------------------------------------------------
@@ -516,16 +521,81 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 $cliCmd = Get-Command meterhouse -ErrorAction SilentlyContinue
 if ($cliCmd) {
-  $runner = { param($FleetArgs) & meterhouse @FleetArgs }
+  $cliExecute = $cliCmd.Source
+  $cliBaseArgs = @()
 } else {
-  $runner = { param($FleetArgs) & $pyExe @pyArgs -m meterhouse @FleetArgs }
+  $cliExecute = $pyExe
+  $cliBaseArgs = @($pyArgs) + @('-m', 'meterhouse')
 }
+
+# A single, explicit call path instead of a scriptblock wrapper
+# (\`\$runner = { param(\$FleetArgs) & meterhouse @FleetArgs }\`). That wrapper
+# double-splats - once binding the caller's array to \$FleetArgs, again
+# splatting \$FleetArgs into the actual invocation - and every call site had
+# to remember to pass a non-empty array through both hops correctly. This
+# script previously hit \`meterhouse\` running with zero arguments and
+# printing its own top-level usage screen, which is exactly the failure mode
+# a silently-empty \$FleetArgs produces: no subcommand means argparse's
+# subparsers (\`required=True\`) reject it before anything else runs. Refusing
+# to call with an empty argument list here, once, in the one place the
+# command is actually built, is what makes that failure mode impossible
+# instead of merely unlikely.
+function Invoke-Meterhouse {
+  param([Parameter(Mandatory)][string[]]$Arguments)
+
+  if (-not $Arguments -or $Arguments.Count -eq 0) {
+    throw "Invoke-Meterhouse called with no subcommand - refusing to run 'meterhouse' with no arguments."
+  }
+
+  $fullArgs = @($cliBaseArgs) + $Arguments
+  $commandLine = "$cliExecute $($fullArgs -join ' ')"
+  Write-Host "  > $commandLine"
+
+  # stderr goes to a temp file, not \`2>&1\` merged into the output stream:
+  # under \`\$ErrorActionPreference = 'Stop'\` (set above), \`2>&1\` turns every
+  # stderr line into a terminating NativeCommandError at the point it's
+  # written, which would abort the call before \$LASTEXITCODE could ever be
+  # checked - the exact trap already documented on the pip install call
+  # further up this script. File redirection carries no such risk.
+  $stderrFile = [System.IO.Path]::GetTempFileName()
+  try {
+    $stdoutLines = & $cliExecute @fullArgs 2>$stderrFile
+    $exitCode = $LASTEXITCODE
+    $stderrText = (Get-Content -Path $stderrFile -Raw -ErrorAction SilentlyContinue)
+  } finally {
+    Remove-Item -Path $stderrFile -ErrorAction SilentlyContinue
+  }
+
+  if ($stdoutLines) { $stdoutLines | ForEach-Object { Write-Host $_ } }
+  if ($stderrText) { Write-Host $stderrText -ForegroundColor DarkYellow }
+
+  $logLine = "[{0}] RUN {1}" -f (Get-Date -Format 'o'), $commandLine
+  $logLine += "\`n  cwd: {0}" -f (Get-Location)
+  $logLine += "\`n  exit: {0}" -f $exitCode
+  $logLine += "\`n  stdout: {0}" -f (($stdoutLines | Out-String).Trim())
+  $logLine += "\`n  stderr: {0}" -f (($stderrText | Out-String).Trim())
+  Add-Content -Path $InstallLog -Value $logLine
+
+  if ($exitCode -ne 0) {
+    throw "meterhouse $($Arguments -join ' ') exited with code $exitCode. $stderrText"
+  }
+  return $stdoutLines
+}
+
+# Resolved once, used both to launch the daemon immediately below and as the
+# scheduled task's action - see step 6.
+$pyCmd = Get-Command $pyExe -ErrorAction SilentlyContinue
+$launchFile = if ($pyCmd) { $pyCmd.Source } else { $pyExe }
+$pyDir = Split-Path $launchFile -Parent
+$windowless = if ($pyExe -eq 'py') { Join-Path $pyDir 'pyw.exe' } else { Join-Path $pyDir 'pythonw.exe' }
+$daemonFile = if (Test-Path $windowless) { $windowless } else { $launchFile }
+$daemonArgs = $pyArgs + @('-m', 'meterhouse', 'daemon')
 
 # --- 3. register this machine ------------------------------------------------
 Write-Host 'Connecting this PC to the dashboard...'
 $registerArgs = @('register', '--server', $Server, '--api-key', $ApiKey, '--display-name', $DisplayName)
 if ($WsUrl) { $registerArgs += @('--ws-url', $WsUrl) }
-& $runner $registerArgs
+Invoke-Meterhouse -Arguments $registerArgs
 
 # --- 3b. share Claude account + plan + rate-limit usage ------------------------
 # Folded into the one-line setup rather than left as a step to run later, so a
@@ -537,135 +607,161 @@ if ($WsUrl) { $registerArgs += @('--ws-url', $WsUrl) }
 # time - it takes effect immediately, no reinstall - with:
 #   meterhouse account disable
 Write-Host 'Sharing Claude account + plan + rate-limit usage...'
-& $runner @('account', 'enable') | Out-Null
+Invoke-Meterhouse -Arguments @('account', 'enable') | Out-Null
 
 # --- 4. first scan (immediate feedback; the daemon takes over from here) -----
 Write-Host 'Scanning Claude Code transcripts (this may take a moment)...'
-& $runner @('scan')
+Invoke-Meterhouse -Arguments @('scan')
 Write-Host 'Sending usage to the dashboard...'
-& $runner @('sync')
+Invoke-Meterhouse -Arguments @('sync')
 
-# --- 5. resolve a windowless launch target ------------------------------------
-# Two separate problems are being solved here.
-#
-# 1. A console process launched from this window is attached to this window's
-#    console. Closing the terminal sends it CTRL_CLOSE_EVENT and Windows kills
-#    it - which is exactly why usage stopped flowing the moment someone closed
-#    the shell they pasted the installer into. pythonw.exe (pyw.exe for the
-#    launcher) is the GUI-subsystem interpreter: it gets no console at all, so
-#    there is no console to close and nothing to signal it.
-#
-# 2. Scheduled tasks are given the executable and its arguments as separate
-#    values, never a single command string. Every quoting hazard that used to
-#    break registration (a Python path containing spaces, the nested quotes in
-#    a "cmd /c a && b" action) disappears with it.
-$pyCmd = Get-Command $pyExe -ErrorAction SilentlyContinue
-$launchFile = if ($pyCmd) { $pyCmd.Source } else { $pyExe }
-$pyDir = Split-Path $launchFile -Parent
-$windowless = if ($pyExe -eq 'py') { Join-Path $pyDir 'pyw.exe' } else { Join-Path $pyDir 'pythonw.exe' }
-$daemonFile = if (Test-Path $windowless) { $windowless } else { $launchFile }
-$onceArgs   = $pyArgs + @('-m', 'meterhouse', 'once', '--quiet')
+# --- 5. start the agent -------------------------------------------------------
+# A console process launched from this window is attached to this window's
+# console: closing the terminal sends it CTRL_CLOSE_EVENT and Windows kills
+# it, which is why usage used to stop flowing the moment someone closed the
+# shell they pasted the installer into. pythonw.exe (pyw.exe for the
+# launcher) is the GUI-subsystem interpreter - it gets no console at all, so
+# there is nothing to close and nothing to signal it. Fire-and-forget: this
+# process keeps running after this script (and this window) exits.
+Write-Host 'Starting the agent...'
+Start-Process -FilePath $daemonFile -ArgumentList ($daemonArgs -join ' ') -WindowStyle Hidden
 
-# --- 6. hand the lifecycle to Claude Code ------------------------------------
-# The agent is event-driven. Claude Code's own session hooks start it when
-# someone begins working and stop it when the last session ends, so an idle PC
-# runs no agent process at all - no logon task, no 5-minute supervisor, no
-# 15-minute poll. Those three tasks existed only to answer "is anyone using
-# Claude Code?", which the hooks answer directly.
+# --- 6. keep it running across reboots and self-heal if it ever dies ---------
+# Two triggers: logon starts it promptly on a fresh session; the 1-minute
+# repeat (Task Scheduler's minimum granularity) is the self-healing floor if
+# it ever dies. Every trigger firing while a daemon is already running exits
+# in milliseconds - the agent's own single-instance lock check - which is
+# what makes a 1-minute repeating trigger safe to register unconditionally
+# rather than fragile. Scheduled tasks are given the executable and its
+# arguments as separate values, never a single command string, so quoting
+# hazards from a Python path containing spaces disappear with it.
 #
-# Crash recovery comes free with them: every prompt submitted re-checks that the
-# agent is alive and restarts it if not, for that session only.
-Write-Host 'Installing Claude Code session hooks...'
-$hooksOk = $true
-try {
-  & $runner @('install-hooks')
-  if ($LASTEXITCODE -ne 0) { $hooksOk = $false }
-} catch { $hooksOk = $false }
-
-# One task remains: a daily catch-up. It is the floor on data loss for a machine
-# where hook installation failed or the agent was killed mid-session. Scanning
-# is incremental and idempotent, so even a day behind it reports in full.
-# It runs only while this user is logged on, which is all a per-user agent
-# needs, and does not require administrator rights to register.
+# Principal is elevation-dependent, not a fixed "Interactive/Limited" pair as
+# before. That fixed pair is what produced "Access is denied" on a plain,
+# non-elevated shell: explicitly constructing a ScheduledTaskPrincipal with a
+# -UserId and -RunLevel (even "Limited", which matches the token's own level)
+# routes registration through a code path that needs the
+# SeCreateGlobalPrivilege/"log on as a batch job" rights an elevated session
+# has and a standard one does not - the RunLevel you ask for does not have to
+# exceed what you already have for this to fail; asking for it *explicitly at
+# all*, on this API, does. A standard user registering a task for themselves
+# without specifying a Principal hits the implicit "current context" path
+# instead, which every account is already permitted to use - this is the
+# actual mechanism the per-account fallback below relies on, not a workaround.
 function Register-MeterhouseTask {
-  param([string]$Name, [string]$Execute, [string[]]$Arguments, [object[]]$Triggers)
+  param([string]$Name, [string]$Execute, [string[]]$Arguments, [object[]]$Triggers, [object]$Principal)
 
   $action = New-ScheduledTaskAction -Execute $Execute -Argument ($Arguments -join ' ')
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries \`
     -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
-  $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" \`
-    -LogonType Interactive -RunLevel Limited
-  Register-ScheduledTask -TaskName $Name -Action $action -Trigger $Triggers \`
-    -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+  if ($Principal) {
+    Register-ScheduledTask -TaskName $Name -Action $action -Trigger $Triggers \`
+      -Settings $settings -Principal $Principal -Force -ErrorAction Stop | Out-Null
+  } else {
+    # No -Principal at all: registers under this process's own token, the
+    # one registration path standard (non-admin) accounts are always allowed.
+    Register-ScheduledTask -TaskName $Name -Action $action -Trigger $Triggers \`
+      -Settings $settings -Force -ErrorAction Stop | Out-Null
+  }
 }
 
-# Task names from previous installs. These ran the agent around the clock and
-# polled every 5 and 15 minutes; leaving any of them behind would keep doing
-# exactly the work the hooks were installed to eliminate.
+# Task names from previous installs (hook-driven daily catch-up, or older
+# always-on attempts). Leaving any behind would run the agent more often than
+# this design intends, or duplicate the supervisor registered below.
 #
-# No \`2>&1\` here either: schtasks writes "cannot find the file specified" to
-# stderr for every task that simply never existed, which is the normal case on
-# a fresh machine. Merged into the error stream under \`Stop\`, that expected,
-# ignorable message would have ended the script on almost every first install
-# - before the daily catch-up task, or anything after it, ever ran.
-foreach ($old in @('Meterhouse Agent', 'Meterhouse Agent Check', 'Meterhouse Scan+Sync',
+# Routed through cmd /c "... >nul 2>nul", not PowerShell's own 2>$null or
+# | Out-Null. schtasks.exe writes "ERROR: The system cannot find the file
+# specified." straight to the inherited console handle for every task that
+# simply never existed - the normal case on a fresh machine - rather than
+# through its redirectable stdout/stderr streams, so neither
+# \`| Out-Null\` (which only silences the success/object stream) nor
+# PowerShell-level \`2>\` redirection catches it; five legacy names here means
+# five of these printed on every fresh install. cmd.exe's redirection happens
+# at the OS handle level before schtasks ever gets a console to write to
+# directly, which is what actually suppresses it - confirmed by running the
+# generated script, not by inspection (this is the same fix already applied
+# in deploy/install.ps1's equivalent loop).
+foreach ($old in @('Meterhouse Daily Catch-up', 'Meterhouse Agent Check', 'Meterhouse Scan+Sync',
                    'Meterhouse Daemon', 'Meterhouse Daemon Watchdog')) {
-  schtasks /Delete /TN $old /F | Out-Null
+  cmd /c "schtasks /Delete /TN \`"$old\`" /F >nul 2>nul"
 }
 Remove-Item (Join-Path $InstallDir 'watchdog.ps1') -ErrorAction SilentlyContinue
 
 $tasksOk = $true
-try {
-  $daily = New-ScheduledTaskTrigger -Daily -At '12:30'
-  Register-MeterhouseTask -Name 'Meterhouse Daily Catch-up' -Execute $daemonFile \`
-    -Arguments $onceArgs -Triggers @($daily)
-  Write-Host 'Background task registered:'
-  Write-Host '  - Meterhouse Daily Catch-up  (once a day, safety net only)'
-} catch {
-  $tasksOk = $false
-  Write-Host ("Could not register the scheduled task: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
-  Write-Host 'Falling back to schtasks...' -ForegroundColor Yellow
-  # Fallback for machines where the ScheduledTasks module is unavailable. The
-  # action is written to a .cmd file first so the /TR value is a single path
-  # with no embedded quotes to mangle.
-  $launcher = Join-Path $InstallDir 'catchup.cmd'
-  Set-Content -Path $launcher -Encoding ASCII -Value @(
-    '@echo off',
-    'start "" /B "' + $daemonFile + '" ' + ($onceArgs -join ' ')
-  )
-  schtasks /Create /SC DAILY /ST 12:30 /TN 'Meterhouse Daily Catch-up' /TR "\`"$launcher\`"" /RL LIMITED /F | Out-Null
-  if ($LASTEXITCODE -eq 0) { $tasksOk = $true; Write-Host 'Registered via schtasks.' }
+Write-InstallStep -Critical $false -Step 'Register scheduled task' -Action {
+  $logon = New-ScheduledTaskTrigger -AtLogOn
+  # No -RepetitionDuration: that omission is what makes the repeat
+  # indefinite. [TimeSpan]::MaxValue used to be passed here to mean
+  # "forever", but Task Scheduler serializes triggers as an ISO 8601
+  # duration and MaxValue overflows what the schema can represent - the task
+  # registered without error but then failed to *run*, with "The task XML
+  # contains a value which is incorrectly formatted or out of range". That
+  # silent-until-runtime failure is exactly why the agent stopped surviving
+  # reboots on machines that hit it. Leaving the parameter out sidesteps the
+  # conversion entirely.
+  $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
+
+  if ($IsElevated) {
+    # Machine-wide: runs as SYSTEM whether or not this user is logged in,
+    # and survives switching users entirely. Only valid with admin rights,
+    # which this branch already has.
+    $taskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  } else {
+    # No Principal at all - see Register-MeterhouseTask's docstring above
+    # for why passing one here is what caused "Access is denied" on a
+    # standard account. This registers under the current user's own token,
+    # the one path every account is already permitted to use.
+    $taskPrincipal = $null
+  }
+
+  Register-MeterhouseTask -Name 'Meterhouse Agent' -Execute $daemonFile \`
+    -Arguments $daemonArgs -Triggers @($logon, $repeat) -Principal $taskPrincipal
+
+  # Re-read the task from the scheduler rather than trusting a non-throwing
+  # return - Register-ScheduledTask has been seen to report success on a
+  # definition Task Scheduler then silently rejects.
+  $registered = Get-ScheduledTask -TaskName 'Meterhouse Agent' -ErrorAction Stop
+  if ($registered.State -eq 'Disabled') {
+    throw "Task registered but is Disabled - Task Scheduler will not run it."
+  }
+  Write-Host ("    scope: {0}, state: {1}" -f $(if ($IsElevated) { 'machine-wide (SYSTEM)' } else { 'per-user' }), $registered.State)
+}
+$tasksOk = (Get-ScheduledTask -TaskName 'Meterhouse Agent' -ErrorAction SilentlyContinue) -ne $null
+if (-not $tasksOk) {
+  Write-Host 'The agent is running now, but will not survive a reboot or crash without the scheduled task.' -ForegroundColor Yellow
+  Write-Host ("See {0} for the exact error (including the Windows error code)." -f $InstallLog) -ForegroundColor Yellow
 }
 
-# --- 7. confirm the wiring, without starting anything -------------------------
-# Nothing is launched here on purpose. There is no Claude Code session open
-# right now, so a daemon started at this moment would correctly scan once and
-# exit - and an installer that waits for a health file to appear would then
-# report a false failure. What matters is whether the hooks are registered.
-& $runner @('sessions')
+# --- 7. confirm it's actually running -----------------------------------------
+# 'status' is a newer subcommand - a machine that installed from a stale
+# cached wheel (pip resolving to an already-downloaded, older version) could
+# still be running an agent build that predates it, with 'health' as the
+# newest command it does have. Invoke-Meterhouse turns that nonzero exit into
+# a real, catchable exception (it checks $LASTEXITCODE itself and throws) -
+# a bare try/catch around the old direct \`& $runner @('status')\` call could
+# not do this, because a native command's nonzero exit is not a terminating
+# PowerShell error on its own; that gap is exactly why the raw argparse
+# "invalid choice" text used to print straight through here regardless.
+try {
+  Invoke-Meterhouse -Arguments @('status') | Out-Null
+} catch {
+  Write-Host "'meterhouse status' is not available on this install (older agent version) - falling back to 'health'." -ForegroundColor Yellow
+  try {
+    Invoke-Meterhouse -Arguments @('health') | Out-Null
+  } catch {
+    Write-Host "Could not confirm the agent is running. Re-run:" -ForegroundColor Yellow
+    Write-Host '  python -m pip install --upgrade --force-reinstall meterhouse-rotor' -ForegroundColor Yellow
+  }
+}
 
 Write-Host ''
-if ($hooksOk) {
-  Write-Host 'Done. The agent starts with your next Claude Code session.' -ForegroundColor Green
-  Write-Host 'You can close this window. Nothing runs in the background until you use Claude Code,'
-  Write-Host 'and it stops on its own when you finish.'
-  Write-Host ''
-  Write-Host 'If Claude Code is open right now, fully quit and reopen it.' -ForegroundColor Yellow
-  Write-Host 'It reads hook config when a session starts, not while running - so a session already'
-  Write-Host 'open when this ran (including one you pasted this command from) will not pick these up.'
-  Write-Host ''
-  Write-Host 'Claude account + plan + rate-limit usage is shared too - turn it off any time with:'
-  Write-Host ('  {0} -m meterhouse account disable' -f $launchFile)
-} else {
-  Write-Host 'Usage was synced, but the Claude Code hooks could not be installed.' -ForegroundColor Yellow
-  Write-Host 'The daily catch-up task will still report usage once a day.'
-  Write-Host 'To retry, or to see why it failed, run:'
-  Write-Host ('  {0} -m meterhouse install-hooks' -f $launchFile)
-  Write-Host 'If this PC cannot use hooks at all, run the agent in always-on mode instead:'
-  Write-Host ('  {0} -m meterhouse daemon --always-on' -f $launchFile)
-}
+Write-Host 'Done. The agent is running continuously and does not depend on Claude Code sessions.' -ForegroundColor Green
+Write-Host 'You can close this window.'
+Write-Host ''
+Write-Host 'Claude account + plan + rate-limit usage is shared too - turn it off any time with:'
+Write-Host ('  {0} -m meterhouse account disable' -f $launchFile)
 if (-not $tasksOk) {
-  Write-Host 'No scheduled task could be registered - there is no daily catch-up on this PC.' -ForegroundColor Yellow
+  Write-Host 'No scheduled task could be registered - the agent will not restart after a reboot or crash.' -ForegroundColor Yellow
 }
 Write-Host ("Open {0} to see this PC." -f $Server)
 Write-Host ''

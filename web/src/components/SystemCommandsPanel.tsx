@@ -17,7 +17,9 @@ import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { AgentCommand, CommandAction, SetConfigPayload, SystemRow } from "../api/types";
 import { fmtRelative } from "../lib/format";
+import { SystemDiagnosticsPanel } from "./SystemDiagnosticsPanel";
 import {
+  Alert,
   Badge,
   Button,
   EmptyState,
@@ -32,9 +34,34 @@ import {
   useToast,
 } from "./ui";
 
+/**
+ * Why a queued command won't run yet, keyed by the same graded health the
+ * Systems table already shows. The agent runs continuously now, so any of
+ * these mean something's actually wrong (or it was stopped on purpose) —
+ * not the normal resting state.
+ */
+const NOT_RUNNING_REASON: Partial<Record<SystemRow["health"], string>> = {
+  dormant:
+    "This PC's agent was stopped deliberately (a Stop command, or uninstalled). Queued " +
+    "commands run once it's started again — via a Restart command, the scheduled task, " +
+    "or a reboot.",
+  late: "This PC hasn't checked in recently, so a queued command may sit pending for a while " +
+    "before it's picked up.",
+  stalled: "This PC's agent went quiet without checking in again. A queued command will " +
+    "run once it resumes contact — if it doesn't, try Restart agent.",
+  dead: "This PC hasn't been heard from in over a day. Queued commands will sit pending until " +
+    "it reconnects — re-running the connect command on that machine may be needed.",
+  never: "This PC has never successfully checked in, so nothing is listening for queued " +
+    "commands yet — finish setup on that machine first.",
+};
+
 function statusBadge(status: AgentCommand["status"]) {
   if (status === "acked") return <Badge tone="good">Acked</Badge>;
   if (status === "failed") return <Badge tone="critical">Failed</Badge>;
+  // Terminal, not "still waiting" — pause/resume/stop/restart ack as skipped
+  // when there's no running daemon loop to apply them to (e.g. a scheduled
+  // one-shot sync). Falling through to "Pending" here would read as stuck.
+  if (status === "skipped") return <Badge tone="neutral">Skipped</Badge>;
   return <Badge tone="neutral">Pending</Badge>;
 }
 
@@ -42,7 +69,12 @@ const ACTION_LABEL: Record<CommandAction, string> = {
   scan_now: "Scan now",
   pause: "Pause",
   resume: "Resume",
+  stop: "Stop scan",
   set_config: "Config push",
+  force_sync: "Force sync",
+  refresh_data: "Refresh data",
+  restart: "Restart agent",
+  health_check: "Health check",
 };
 
 export function SystemCommandsPanel({
@@ -96,6 +128,12 @@ export function SystemCommandsPanel({
       hint="Commands are queued for delivery, not applied instantly — the agent acks once it has actually run them."
     >
       <div className="flex flex-col gap-5">
+        {NOT_RUNNING_REASON[system.health] && (
+          <Alert tone="info" title="Agent not currently running">
+            {NOT_RUNNING_REASON[system.health]}
+          </Alert>
+        )}
+
         <div>
           <div className="mb-2 text-xs font-semibold text-ink-2">Quick actions</div>
           <div className="flex flex-wrap gap-2">
@@ -123,11 +161,56 @@ export function SystemCommandsPanel({
             >
               Resume
             </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              loading={enqueue.isPending && enqueue.variables?.action === "stop"}
+              onClick={() => enqueue.mutate({ action: "stop" })}
+            >
+              Stop scan
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={enqueue.isPending && enqueue.variables?.action === "force_sync"}
+              onClick={() => enqueue.mutate({ action: "force_sync" })}
+            >
+              Force sync
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={enqueue.isPending && enqueue.variables?.action === "refresh_data"}
+              onClick={() => enqueue.mutate({ action: "refresh_data" })}
+            >
+              Refresh data
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              loading={enqueue.isPending && enqueue.variables?.action === "restart"}
+              onClick={() => enqueue.mutate({ action: "restart" })}
+            >
+              Restart agent
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={enqueue.isPending && enqueue.variables?.action === "health_check"}
+              onClick={() => {
+                enqueue.mutate({ action: "health_check" });
+                qc.invalidateQueries({ queryKey: qk.systemHealth(system.system_id) });
+              }}
+            >
+              Health check
+            </Button>
           </div>
         </div>
 
         <div>
-          <div className="mb-2 text-xs font-semibold text-ink-2">Push config</div>
+          <div className="mb-2 text-xs font-semibold text-ink-2">
+            Configuration refresh
+          </div>
           <div className="grid gap-3 sm:grid-cols-[minmax(0,12rem)_auto] sm:items-end">
             <Field label="Scan interval (seconds)" hint="Minimum 5.">
               {(p) => (
@@ -178,6 +261,15 @@ export function SystemCommandsPanel({
             ))}
           </div>
         </div>
+
+        <details className="rounded-xl border border-line bg-surface-2 px-4 py-3">
+          <summary className="cursor-pointer text-xs font-semibold text-ink-2">
+            Diagnostics
+          </summary>
+          <div className="mt-3">
+            <SystemDiagnosticsPanel system={system} />
+          </div>
+        </details>
 
         <div>
           <div className="mb-2 text-xs font-semibold text-ink-2">Command history</div>
