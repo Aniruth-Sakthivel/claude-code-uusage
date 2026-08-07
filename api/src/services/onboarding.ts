@@ -505,12 +505,24 @@ if (-not $pyExe) {
 # \`\$ErrorActionPreference = 'Stop'\` above that is a terminating error - so a
 # perfectly harmless pip warning (e.g. a stale cache entry) killed the whole
 # install before it ever reached pip's actual, checked exit code below.
-Write-Host 'Installing the Meterhouse agent (pip)...'
+# Installs from the git repo FIRST, not PyPI. This is temporary and
+# deliberate, not a style choice: the "meterhouse-rotor" PyPI package is a
+# real, successfully-installable release (0.3.0) that predates the always-on
+# daemon rebuild - \`pip install --upgrade meterhouse-rotor\` against it exits
+# 0, so a PyPI-first install silently succeeds while shipping the *old*
+# session-gated agent (no \`daemon\`/\`status\`/\`connect\`, scans once and exits
+# when it thinks a Claude Code session ended). That is exactly what every
+# "Connect a PC" install was doing until this was found - not a rare edge
+# case, the default outcome. There is no version check that could catch this
+# from here: the old build reports itself as installed successfully because
+# it is. Revert this order once meterhouse-rotor is republished to PyPI at a
+# version that includes the daemon rebuild.
+Write-Host 'Installing the Meterhouse agent (from source, not PyPI - see comment in onboarding.ts)...'
 & $pyExe @pyArgs -m pip install --upgrade pip --quiet | Out-Null
-& $pyExe @pyArgs -m pip install --upgrade meterhouse-rotor --quiet | Out-Null
+& $pyExe @pyArgs -m pip install "git+$RepoUrl#subdirectory=agent" --quiet --force-reinstall | Out-Null
 if ($LASTEXITCODE -ne 0) {
-  Write-Host 'PyPI package unavailable - installing from source...'
-  & $pyExe @pyArgs -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
+  Write-Host 'Source install failed (git not on PATH, or repo unreachable) - falling back to PyPI (may be an older build)...' -ForegroundColor Yellow
+  & $pyExe @pyArgs -m pip install --upgrade meterhouse-rotor --quiet
   if ($LASTEXITCODE -ne 0) {
     Write-Host 'Could not install the agent.' -ForegroundColor Red
     exit 1

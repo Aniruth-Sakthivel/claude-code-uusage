@@ -64,14 +64,25 @@ function Find-Python {
 }
 
 function Install-AgentViaPip {
-    Write-Host "Installing Meterhouse agent (pip)..."
+    # Installs from git FIRST, not PyPI - deliberately, not stylistically.
+    # "meterhouse-rotor" on PyPI is a real, successfully-installable release
+    # (0.3.0) that predates the always-on daemon rebuild: a plain
+    # `pip install meterhouse-rotor` against it exits 0, so a PyPI-first
+    # install here would silently succeed while shipping the *old*
+    # session-gated agent (no `daemon`/`status`/`connect`; scans once and
+    # exits when it thinks a Claude Code session ended) - there is no
+    # version check anywhere in this script that could catch that, because
+    # the old build genuinely does report itself installed successfully.
+    # Revert this order once meterhouse-rotor is republished to PyPI at a
+    # version that includes the daemon rebuild.
+    Write-Host "Installing Meterhouse agent (from source, not PyPI - see comment above Install-AgentViaPip)..."
     & $script:PyExe @script:PyArgs -m pip install --upgrade pip --quiet
-    & $script:PyExe @script:PyArgs -m pip install meterhouse-rotor --quiet
+    & $script:PyExe @script:PyArgs -m pip install "git+$RepoUrl#subdirectory=agent" --quiet --force-reinstall
     if ($LASTEXITCODE -eq 0) { return }
 
-    Write-Host "PyPI package not found - installing from git..."
-    & $script:PyExe @script:PyArgs -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
-    if ($LASTEXITCODE -ne 0) { throw "Could not install agent. Publish to PyPI or set -RepoUrl." }
+    Write-Host "Source install failed (git not on PATH, or repo unreachable) - falling back to PyPI (may be an older build)..." -ForegroundColor Yellow
+    & $script:PyExe @script:PyArgs -m pip install --upgrade meterhouse-rotor --quiet
+    if ($LASTEXITCODE -ne 0) { throw "Could not install agent from source or PyPI." }
 }
 
 Write-Host "Meterhouse setup for '$Name' -> $Server"

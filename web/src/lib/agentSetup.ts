@@ -30,12 +30,27 @@ function pwshQuote(s: string): string {
  * with "not recognized" on a perfectly good install. Going through the
  * interpreter, which is already on PATH, sidesteps that entirely.
  */
-export const AGENT_INSTALL = "python -m pip install --upgrade meterhouse-rotor";
-
-/** Fallback when the package is not on PyPI yet — installs from the repo (needs git). */
 export function agentInstallFromGit(repoUrl = "https://github.com/Aniruth-Sakthivel/claude-code-uusage.git"): string {
-  return `python -m pip install "git+${repoUrl}#subdirectory=agent"`;
+  return `python -m pip install "git+${repoUrl}#subdirectory=agent" --force-reinstall`;
 }
+
+/**
+ * Installs from git, not PyPI — deliberately, not stylistically.
+ * `meterhouse-rotor` on PyPI is a real, successfully-installable release
+ * (0.3.0) that predates the always-on daemon rebuild: `pip install
+ * --upgrade meterhouse-rotor` against it exits 0, so a PyPI-first install
+ * silently succeeds while shipping the *old* session-gated agent (no
+ * `daemon`/`status`/`connect`; scans once and exits when it thinks a Claude
+ * Code session ended). There is no version check anywhere in this flow that
+ * could catch that — the old build reports itself installed successfully
+ * because it genuinely is. Revert to plain PyPI once `meterhouse-rotor` is
+ * republished at a version that includes the daemon rebuild.
+ */
+export const AGENT_INSTALL = agentInstallFromGit();
+
+/** The old PyPI-only install — kept only as a documented fallback for when
+ * git isn't available; not used as the default, see `AGENT_INSTALL`. */
+export const AGENT_INSTALL_FROM_PYPI = "python -m pip install --upgrade meterhouse-rotor";
 
 export function registerCommand(server: string, apiKey: string, displayName: string): string {
   return `python -m meterhouse register --server ${pwshQuote(server)} --api-key ${pwshQuote(apiKey)} --display-name ${pwshQuote(displayName)}`;
