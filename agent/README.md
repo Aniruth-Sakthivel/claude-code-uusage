@@ -320,11 +320,15 @@ python -m meterhouse account   [show | enable | disable]
 python -m meterhouse --version
 ```
 
-### Claude account reporting (optional, off by default)
+### Claude account reporting (off by default in the agent; on by default from Connect a PC)
 
 `account` controls whether this machine also reports which Claude
 subscription it is signed into, so an admin can see who is on which plan and
-how much of its rate limit is used.
+how much of its rate limit is used. The agent itself defaults this off — a
+plain `pip install` + `register` + `sync` never reports it. The dashboard's
+"Connect a PC" one-liner turns it on explicitly, as one visible step of doing
+everything in a single command; `account disable` opts back out on that PC at
+any time, no reinstall needed.
 
 ```
 python -m meterhouse account show      # print the exact payload - sends nothing

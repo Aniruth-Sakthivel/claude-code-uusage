@@ -213,8 +213,9 @@ export function AdminSettings() {
       <Card>
         <CardHead title="Fleet privacy" hint={`${reportingSystems} PCs reporting accounts`} />
         <div className="text-base text-ink-2">
-          Account reporting and session-title sync are per-machine switches, off by default. The
-          server cannot enable them remotely — each machine opts in locally.
+          Account reporting and session-title sync are per-machine switches. The Connect PC
+          command turns account reporting on as part of setup; session-title sync stays off. The
+          server cannot change either remotely — each machine opts in and out locally.
         </div>
         <div className="mt-3">
           <CodeBlock

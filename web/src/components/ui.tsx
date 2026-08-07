@@ -350,12 +350,13 @@ export function Alert({
   title,
   children,
 }: {
-  tone?: "info" | "warn" | "error";
+  tone?: "info" | "success" | "warn" | "error";
   title?: string;
   children: ReactNode;
 }) {
   const tones: Record<string, string> = {
     info: "border-line bg-accent-weak text-ink-2",
+    success: "border-line bg-surface-2 text-good",
     warn: "border-line bg-surface-2 text-ink-2",
     error: "border-line bg-critical-weak text-critical",
   };

@@ -42,6 +42,51 @@ function pwshQuote(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
+/**
+ * The one-line command a user pastes to install the agent.
+ *
+ * Deliberately not a bare `irm URL | iex`. That pipes Invoke-RestMethod's
+ * result straight into Invoke-Expression with zero validation, and on at
+ * least one real machine the result arrived split into a line array instead
+ * of one string — cause not pinned down (repeated, careful reproduction
+ * attempts against the identical server, script, and PowerShell version all
+ * came back clean, so whatever mangled it was environmental: a security
+ * product doing HTTP inspection, an antivirus proxy, a flaky loopback read).
+ * Piping an array into `iex` invokes it once per element: most are blank
+ * lines, each throwing "Cannot bind argument to parameter 'Command' because
+ * it is an empty string", and any multi-line construct in the script fails
+ * with "Missing closing '}'" because only its opening line ran. Capturing
+ * into a variable first makes the array case detectable and — since the
+ * bytes themselves were fine, only their shape was wrong — trivially
+ * repairable by rejoining before executing. A null/empty result (a
+ * genuinely failed fetch) gets a plain error instead of that same cryptic
+ * parameter-binding message.
+ *
+ * Every `$` below is backtick-escaped. This whole string is one argument to
+ * an OUTER powershell.exe, wrapped in double quotes — and double-quoted
+ * strings interpolate variables even when the string is just being built to
+ * hand to a subprocess. Pasted at a PowerShell prompt (the officially
+ * supported target — cmd.exe gets an explicit warning to avoid it), an
+ * unescaped `$s` is a variable reference in the OUTER shell's own scope,
+ * where it is unset — so it silently becomes an empty string before the
+ * nested `-Command` ever runs, and `iex` receives literally nothing. Caught
+ * by actually running the generated command, not by inspection: the first,
+ * unescaped version of this failed with "'=' is not recognized" on the very
+ * first try. `installCommand.test.ts` locks the escaping down so a future
+ * edit that adds a variable without backtick-escaping it fails loudly
+ * instead of silently reintroducing exactly this.
+ */
+export function buildInstallCommand(scriptUrl: string): string {
+  return (
+    `powershell -NoProfile -ExecutionPolicy Bypass -Command ` +
+    "\"`$s = irm '" + scriptUrl + "'; " +
+    "if (`$s -is [array]) { `$s = `$s -join [Environment]::NewLine }; " +
+    "if ([string]::IsNullOrWhiteSpace(`$s)) { " +
+    "Write-Host 'Could not fetch the setup script - try again, or open the link in a browser.' -ForegroundColor Red " +
+    '} else { iex `$s }"'
+  );
+}
+
 export interface ConnectInput {
   display_name: string;
   system_id?: string | null;
@@ -199,10 +244,11 @@ export async function connectPc(
   });
 
   const base = publicBaseUrl(requestOrigin);
+  const scriptUrl = `${base}/api/v1/connect/script/${token}`;
   return {
     systemId: result.systemId,
     displayName: result.displayName,
-    installCommand: `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${base}/api/v1/connect/script/${token}' | iex"`,
+    installCommand: buildInstallCommand(scriptUrl),
     manualCommands: manualSetupBlock(base, result.displayName, fullKey, config.PUBLIC_WS_URL),
     apiKey: fullKey,
     expiresAt,
@@ -400,12 +446,14 @@ export function renderInstallScript(opts: {
   const q = pwshQuote;
 
   return `# Meterhouse agent setup - generated for ${displayName}
-# Installs the agent (pip), connects this PC, and hands its lifecycle to Claude
-# Code so reporting continues after this window is closed and after a reboot:
+# One command does everything: installs the agent (pip), connects this PC,
+# shares Claude account + plan + rate-limit usage, sends the first scan, and
+# hands its lifecycle to Claude Code so reporting continues after this window
+# is closed and after a reboot:
 #   - session hooks start the agent when you open Claude Code and stop it when
 #     you finish, so an idle PC runs no agent process at all;
 #   - one daily catch-up scan+sync as a safety net.
-# Closing this window is expected and safe.
+# Nothing else to run afterward. Closing this window is expected and safe.
 
 $ErrorActionPreference = 'Stop'
 
@@ -424,24 +472,40 @@ Write-Host ("  Server: {0}" -f $Server)
 Write-Host ''
 
 # --- 1. find Python ----------------------------------------------------------
-$py = $null
+# Kept as a separate executable and argument list, never one array that gets
+# indexed. \`$x = if (...) { @('python') }\` does NOT produce an array: PowerShell
+# enumerates the single-element result through the statement's output pipeline
+# and \`$x\` lands as the plain string 'python'. \`$x[0]\` is then the character
+# 'p', and the install died with "The term 'p' is not recognized". The two-
+# element \`@('py','-3')\` branch survived that, so the failure only ever showed
+# on machines where python.exe was found first — i.e. most of them.
+$pyExe = $null
+$pyArgs = @()
 foreach ($candidate in @('python', 'py')) {
-  $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-  if ($cmd) { $py = if ($candidate -eq 'py') { @('py', '-3') } else { @('python') }; break }
+  if (Get-Command $candidate -ErrorAction SilentlyContinue) {
+    $pyExe = $candidate
+    if ($candidate -eq 'py') { $pyArgs = @('-3') }
+    break
+  }
 }
-if (-not $py) {
+if (-not $pyExe) {
   Write-Host 'Python 3.10+ was not found on PATH.' -ForegroundColor Red
   Write-Host 'Install it from https://python.org (tick "Add python.exe to PATH"), then re-run this command.'
   exit 1
 }
 
 # --- 2. install the agent -----------------------------------------------------
+# stdout is discarded to keep this quiet; stderr is left alone. \`2>&1\` on a
+# native executable wraps every stderr line in a NativeCommandError, and with
+# \`\$ErrorActionPreference = 'Stop'\` above that is a terminating error - so a
+# perfectly harmless pip warning (e.g. a stale cache entry) killed the whole
+# install before it ever reached pip's actual, checked exit code below.
 Write-Host 'Installing the Meterhouse agent (pip)...'
-& $py[0] $py[1..($py.Length-1)] -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-& $py[0] $py[1..($py.Length-1)] -m pip install --upgrade meterhouse-rotor --quiet 2>&1 | Out-Null
+& $pyExe @pyArgs -m pip install --upgrade pip --quiet | Out-Null
+& $pyExe @pyArgs -m pip install --upgrade meterhouse-rotor --quiet | Out-Null
 if ($LASTEXITCODE -ne 0) {
   Write-Host 'PyPI package unavailable - installing from source...'
-  & $py[0] $py[1..($py.Length-1)] -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
+  & $pyExe @pyArgs -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
   if ($LASTEXITCODE -ne 0) {
     Write-Host 'Could not install the agent.' -ForegroundColor Red
     exit 1
@@ -454,7 +518,7 @@ $cliCmd = Get-Command meterhouse -ErrorAction SilentlyContinue
 if ($cliCmd) {
   $runner = { param($FleetArgs) & meterhouse @FleetArgs }
 } else {
-  $runner = { param($FleetArgs) & $py[0] $py[1..($py.Length-1)] -m meterhouse @FleetArgs }
+  $runner = { param($FleetArgs) & $pyExe @pyArgs -m meterhouse @FleetArgs }
 }
 
 # --- 3. register this machine ------------------------------------------------
@@ -462,6 +526,18 @@ Write-Host 'Connecting this PC to the dashboard...'
 $registerArgs = @('register', '--server', $Server, '--api-key', $ApiKey, '--display-name', $DisplayName)
 if ($WsUrl) { $registerArgs += @('--ws-url', $WsUrl) }
 & $runner $registerArgs
+
+# --- 3b. share Claude account + plan + rate-limit usage ------------------------
+# Folded into the one-line setup rather than left as a step to run later, so a
+# connected PC needs no second command to appear on the Claude accounts page.
+# What this adds beyond token counts: the account's identity (email, org, plan
+# tier) and the rate-limit percentages Claude Code already caches locally.
+# Prompts, responses, and source code are never read, on this path or any
+# other, and OAuth tokens / credentials are never opened. Opt back out any
+# time - it takes effect immediately, no reinstall - with:
+#   meterhouse account disable
+Write-Host 'Sharing Claude account + plan + rate-limit usage...'
+& $runner @('account', 'enable') | Out-Null
 
 # --- 4. first scan (immediate feedback; the daemon takes over from here) -----
 Write-Host 'Scanning Claude Code transcripts (this may take a moment)...'
@@ -483,13 +559,12 @@ Write-Host 'Sending usage to the dashboard...'
 #    values, never a single command string. Every quoting hazard that used to
 #    break registration (a Python path containing spaces, the nested quotes in
 #    a "cmd /c a && b" action) disappears with it.
-$pyCmd = Get-Command $py[0] -ErrorAction SilentlyContinue
-$launchFile = if ($pyCmd) { $pyCmd.Source } else { $py[0] }
+$pyCmd = Get-Command $pyExe -ErrorAction SilentlyContinue
+$launchFile = if ($pyCmd) { $pyCmd.Source } else { $pyExe }
 $pyDir = Split-Path $launchFile -Parent
-$windowless = if ($py[0] -eq 'py') { Join-Path $pyDir 'pyw.exe' } else { Join-Path $pyDir 'pythonw.exe' }
+$windowless = if ($pyExe -eq 'py') { Join-Path $pyDir 'pyw.exe' } else { Join-Path $pyDir 'pythonw.exe' }
 $daemonFile = if (Test-Path $windowless) { $windowless } else { $launchFile }
-$pyPrefix = if ($py.Count -gt 1) { $py[1..($py.Length-1)] } else { @() }
-$onceArgs   = $pyPrefix + @('-m', 'meterhouse', 'once', '--quiet')
+$onceArgs   = $pyArgs + @('-m', 'meterhouse', 'once', '--quiet')
 
 # --- 6. hand the lifecycle to Claude Code ------------------------------------
 # The agent is event-driven. Claude Code's own session hooks start it when
@@ -527,9 +602,15 @@ function Register-MeterhouseTask {
 # Task names from previous installs. These ran the agent around the clock and
 # polled every 5 and 15 minutes; leaving any of them behind would keep doing
 # exactly the work the hooks were installed to eliminate.
+#
+# No \`2>&1\` here either: schtasks writes "cannot find the file specified" to
+# stderr for every task that simply never existed, which is the normal case on
+# a fresh machine. Merged into the error stream under \`Stop\`, that expected,
+# ignorable message would have ended the script on almost every first install
+# - before the daily catch-up task, or anything after it, ever ran.
 foreach ($old in @('Meterhouse Agent', 'Meterhouse Agent Check', 'Meterhouse Scan+Sync',
                    'Meterhouse Daemon', 'Meterhouse Daemon Watchdog')) {
-  schtasks /Delete /TN $old /F 2>&1 | Out-Null
+  schtasks /Delete /TN $old /F | Out-Null
 }
 Remove-Item (Join-Path $InstallDir 'watchdog.ps1') -ErrorAction SilentlyContinue
 
@@ -552,7 +633,7 @@ try {
     '@echo off',
     'start "" /B "' + $daemonFile + '" ' + ($onceArgs -join ' ')
   )
-  schtasks /Create /SC DAILY /ST 12:30 /TN 'Meterhouse Daily Catch-up' /TR "\`"$launcher\`"" /RL LIMITED /F 2>&1 | Out-Null
+  schtasks /Create /SC DAILY /ST 12:30 /TN 'Meterhouse Daily Catch-up' /TR "\`"$launcher\`"" /RL LIMITED /F | Out-Null
   if ($LASTEXITCODE -eq 0) { $tasksOk = $true; Write-Host 'Registered via schtasks.' }
 }
 
@@ -568,6 +649,13 @@ if ($hooksOk) {
   Write-Host 'Done. The agent starts with your next Claude Code session.' -ForegroundColor Green
   Write-Host 'You can close this window. Nothing runs in the background until you use Claude Code,'
   Write-Host 'and it stops on its own when you finish.'
+  Write-Host ''
+  Write-Host 'If Claude Code is open right now, fully quit and reopen it.' -ForegroundColor Yellow
+  Write-Host 'It reads hook config when a session starts, not while running - so a session already'
+  Write-Host 'open when this ran (including one you pasted this command from) will not pick these up.'
+  Write-Host ''
+  Write-Host 'Claude account + plan + rate-limit usage is shared too - turn it off any time with:'
+  Write-Host ('  {0} -m meterhouse account disable' -f $launchFile)
 } else {
   Write-Host 'Usage was synced, but the Claude Code hooks could not be installed.' -ForegroundColor Yellow
   Write-Host 'The daily catch-up task will still report usage once a day.'

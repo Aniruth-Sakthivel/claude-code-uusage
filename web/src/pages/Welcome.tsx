@@ -8,22 +8,15 @@
 
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 
-import { api } from "../api/client";
-import { qk } from "../api/queryKeys";
-import type { SystemRow } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { ConnectPanel } from "../components/ConnectPanel";
 import { Button, Card, Eyebrow } from "../components/ui";
+import { useConnectWait } from "../lib/useConnectWait";
 
 export function Welcome() {
   const { user, can } = useAuth();
-
-  const systems = useQuery({
-    queryKey: qk.systems,
-    queryFn: () => api.get<SystemRow[]>("/systems"),
-  });
+  const { systems, connectStatus, onConnected, onRetryWait } = useConnectWait();
 
   useEffect(() => {
     document.title = "Get started — Meterhouse";
@@ -46,7 +39,12 @@ export function Welcome() {
         </p>
       </div>
 
-      <ConnectPanel systems={systems.data ?? []} />
+      <ConnectPanel
+        systems={systems.data ?? []}
+        connectStatus={connectStatus}
+        onConnected={onConnected}
+        onRetryWait={onRetryWait}
+      />
 
       {hasSystems && (
         <Card className="flex flex-wrap items-center justify-between gap-3">

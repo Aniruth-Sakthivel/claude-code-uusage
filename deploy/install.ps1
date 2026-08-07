@@ -41,25 +41,36 @@ function Get-StandaloneExe {
     return $null
 }
 
+# The interpreter and its arguments are held apart, never as one array that
+# later gets indexed. `return @("python")` does NOT hand back an array:
+# PowerShell enumerates the single-element result through the function's output
+# pipeline, so the caller receives the plain string "python". `$py[0]` is then
+# the character "p" — which is exactly how this failed, with
+# "The term 'p' is not recognized". The two-element @("py","-3") branch was
+# unaffected, so the bug only bit machines that had python.exe on PATH.
+$script:PyExe = $null
+$script:PyArgs = @()
+
 function Find-Python {
     foreach ($cmd in @("python", "py")) {
         if (Get-Command $cmd -ErrorAction SilentlyContinue) {
-            if ($cmd -eq "py") { return @("py", "-3") }
-            return @($cmd)
+            $script:PyExe = $cmd
+            # `py` is the launcher; -3 selects Python 3. `python` needs nothing.
+            $script:PyArgs = if ($cmd -eq "py") { @("-3") } else { @() }
+            return
         }
     }
     throw "Python 3.10+ not found. Install from https://python.org and ensure it is on PATH."
 }
 
 function Install-AgentViaPip {
-    param([string[]]$Py)
     Write-Host "Installing Meterhouse agent (pip)..."
-    & $Py[0] $Py[1..($Py.Length-1)] -m pip install --upgrade pip --quiet
-    & $Py[0] $Py[1..($Py.Length-1)] -m pip install meterhouse-rotor --quiet
+    & $script:PyExe @script:PyArgs -m pip install --upgrade pip --quiet
+    & $script:PyExe @script:PyArgs -m pip install meterhouse-rotor --quiet
     if ($LASTEXITCODE -eq 0) { return }
 
     Write-Host "PyPI package not found - installing from git..."
-    & $Py[0] $Py[1..($Py.Length-1)] -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
+    & $script:PyExe @script:PyArgs -m pip install "git+$RepoUrl#subdirectory=agent" --quiet
     if ($LASTEXITCODE -ne 0) { throw "Could not install agent. Publish to PyPI or set -RepoUrl." }
 }
 
@@ -67,10 +78,9 @@ Write-Host "Meterhouse setup for '$Name' -> $Server"
 
 Write-Host "Fetching the agent..."
 $exe = Get-StandaloneExe
-$py = $null
 if (-not $exe) {
-    $py = Find-Python
-    Install-AgentViaPip -Py $py
+    Find-Python
+    Install-AgentViaPip
 }
 
 function Invoke-Meterhouse {
@@ -80,7 +90,7 @@ function Invoke-Meterhouse {
     } elseif (Get-Command meterhouse -ErrorAction SilentlyContinue) {
         & meterhouse @FleetArgs
     } else {
-        & $py[0] $py[1..($py.Length-1)] -m meterhouse @FleetArgs
+        & $script:PyExe @script:PyArgs -m meterhouse @FleetArgs
     }
 }
 
@@ -88,6 +98,14 @@ Write-Host "Registering with central server..."
 Invoke-Meterhouse -FleetArgs @(
     "register", "--server", $Server.TrimEnd("/"), "--api-key", $ApiKey, "--display-name", $Name
 )
+
+# Folded into setup rather than left as a separate step, so this one command
+# really does cover everything: usage, plus the account's identity (email,
+# org, plan tier) and the rate-limit percentages Claude Code already caches.
+# Prompts, responses, and source code are never read, here or anywhere else.
+# Opt out any time, no reinstall needed: meterhouse account disable
+Write-Host "Sharing Claude account + plan + rate-limit usage..."
+Invoke-Meterhouse -FleetArgs @("account", "enable") | Out-Null
 
 Write-Host "Running first scan..."
 Invoke-Meterhouse -FleetArgs @("scan")
@@ -125,12 +143,12 @@ if (-not $SkipSchedule) {
         $execute = $exe
         $arguments = "once --quiet"
     } else {
-        $pyPath = (Get-Command $py[0]).Source
+        $pyPath = (Get-Command $script:PyExe).Source
         # pythonw/pyw run without a console, so the task does not flash a
         # window in the user's face.
-        $windowless = Join-Path (Split-Path $pyPath -Parent) $(if ($py[0] -eq "py") { "pyw.exe" } else { "pythonw.exe" })
+        $windowless = Join-Path (Split-Path $pyPath -Parent) $(if ($script:PyExe -eq "py") { "pyw.exe" } else { "pythonw.exe" })
         $execute = if (Test-Path $windowless) { $windowless } else { $pyPath }
-        $prefix = if ($py.Count -gt 1) { ($py[1..($py.Length - 1)] -join " ") + " " } else { "" }
+        $prefix = if ($script:PyArgs.Count -gt 0) { ($script:PyArgs -join " ") + " " } else { "" }
         $arguments = "$prefix-m meterhouse once --quiet"
     }
 
@@ -153,4 +171,11 @@ if (-not $SkipSchedule) {
 
 Write-Host ""
 Write-Host "Done. The agent now starts with your Claude Code sessions and stops when they end."
+Write-Host ""
+Write-Host "If Claude Code is open right now, fully quit and reopen it." -ForegroundColor Yellow
+Write-Host "It reads hook config when a session starts, not while running - so a session already"
+Write-Host "open when this ran (including one you pasted this command from) will not pick these up."
+Write-Host ""
+Write-Host "Claude account + plan + rate-limit usage is shared too - turn it off any time:"
+Write-Host "  meterhouse account disable"
 Write-Host "Open your dashboard to see usage for '$Name'."

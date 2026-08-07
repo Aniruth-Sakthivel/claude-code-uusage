@@ -227,9 +227,10 @@ export function Settings() {
 
         <div className="mt-4">
           <Alert tone="info" title="Privacy switches live on the machine">
-            Claude account reporting and session-title sync are off by default and can only be
-            changed on the PC itself — the server cannot turn them on remotely. Run these on the
-            machine to see exactly what would be sent, then decide:
+            Claude account reporting turns on automatically when a PC is connected via the
+            "Connect a PC" page; session-title sync stays off. Both can only be changed on the PC
+            itself — the server cannot turn them on remotely. Run these on the machine to see
+            exactly what is being sent, then decide:
           </Alert>
           <div className="mt-3">
             <CodeBlock

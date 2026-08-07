@@ -4,6 +4,23 @@ export function serverUrl(): string {
 }
 
 /**
+ * Single-quoted PowerShell literal, with any embedded quote escaped — the
+ * same convention the server uses for the generated one-liner (see
+ * `pwshQuote` in `api/src/services/onboarding.ts`).
+ *
+ * Every command below is built as plain text for someone to paste into a
+ * shell, not passed as an argv array — so an unquoted display name is exactly
+ * as fragile as if it were typed by hand. `registerCommand` used to
+ * interpolate `displayName` bare, and the very placeholder this form
+ * suggests, "My Windows PC", broke it: PowerShell split the value into three
+ * separate tokens at the spaces, and argparse rejected everything after the
+ * first word as "unrecognized arguments".
+ */
+function pwshQuote(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
+}
+
+/**
  * Commands are written as `python -m …`, never the bare `meterhouse` /`pip`
  * launchers.
  *
@@ -21,7 +38,7 @@ export function agentInstallFromGit(repoUrl = "https://github.com/Aniruth-Sakthi
 }
 
 export function registerCommand(server: string, apiKey: string, displayName: string): string {
-  return `python -m meterhouse register --server ${server} --api-key ${apiKey} --display-name ${displayName}`;
+  return `python -m meterhouse register --server ${pwshQuote(server)} --api-key ${pwshQuote(apiKey)} --display-name ${pwshQuote(displayName)}`;
 }
 
 export function scanSyncCommands(): string {
@@ -103,7 +120,7 @@ export function windowsInstallScript(opts: {
   scriptUrl?: string;
 }): string {
   const url = opts.scriptUrl ?? `${opts.server}/install.ps1`;
-  return `irm ${url} | iex -Args "-Server ${opts.server} -ApiKey ${opts.apiKey} -Name ${opts.displayName}"`;
+  return `irm ${url} | iex -Args "-Server ${opts.server} -ApiKey ${opts.apiKey} -Name ${pwshQuote(opts.displayName)}"`;
 }
 
 const PENDING_KEY = "meterhouse_pending_api_key";

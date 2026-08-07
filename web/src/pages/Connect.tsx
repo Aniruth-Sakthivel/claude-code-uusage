@@ -7,15 +7,10 @@
  * anything can still connect their own machine.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 
-import { api } from "../api/client";
-import { qk } from "../api/queryKeys";
-import type { SystemRow } from "../api/types";
 import { ConnectPanel } from "../components/ConnectPanel";
 import {
-  Alert,
   Card,
   CardHead,
   ErrorState,
@@ -25,51 +20,16 @@ import {
   Table,
   Td,
   Th,
-  useToast,
 } from "../components/ui";
-import { useRealtime } from "../context/RealtimeContext";
+import { useConnectWait } from "../lib/useConnectWait";
 import { fmtRelative, fmtTokens } from "../lib/format";
 
-/** Fallback if the WebSocket is unreachable/disabled — stop waiting quietly
- * after this long rather than forever; the row's own status still reflects
- * reality either way. */
-const AWAIT_SYNC_TIMEOUT_MS = 10 * 60 * 1000;
-
 export function Connect() {
-  const toast = useToast();
-  const qc = useQueryClient();
-  const realtime = useRealtime();
-  const [awaitingId, setAwaitingId] = useState<string | null>(null);
-  const [justSyncedName, setJustSyncedName] = useState<string | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  const systems = useQuery({
-    queryKey: qk.systems,
-    queryFn: () => api.get<SystemRow[]>("/systems"),
-  });
+  const { systems, connectStatus, onConnected, onRetryWait } = useConnectWait();
 
   useEffect(() => {
     document.title = "Connect a PC — Meterhouse";
   }, []);
-
-  // Live path: the agent's first scan/sync broadcasts a system_updated event
-  // over the dashboard WebSocket — fires within seconds of the install script
-  // finishing, no polling needed.
-  useEffect(() => {
-    return realtime.onSystemUpdated((evt) => {
-      if (evt.system_id !== awaitingId) return;
-      qc.invalidateQueries({ queryKey: qk.systems }).then(() => {
-        const target = qc
-          .getQueryData<SystemRow[]>(qk.systems)
-          ?.find((s) => s.system_id === evt.system_id);
-        if (!target || target.never_synced) return;
-        setJustSyncedName(target.display_name);
-        toast.push(`${target.display_name} connected and synced successfully.`, "success");
-        setAwaitingId(null);
-        clearTimeout(timeoutRef.current);
-      });
-    });
-  }, [awaitingId, realtime, qc, toast]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -86,19 +46,10 @@ export function Connect() {
 
       <ConnectPanel
         systems={systems.data ?? []}
-        onConnected={(systemId) => {
-          setJustSyncedName(null);
-          setAwaitingId(systemId);
-          clearTimeout(timeoutRef.current);
-          timeoutRef.current = setTimeout(() => setAwaitingId(null), AWAIT_SYNC_TIMEOUT_MS);
-        }}
+        connectStatus={connectStatus}
+        onConnected={onConnected}
+        onRetryWait={onRetryWait}
       />
-
-      {justSyncedName && (
-        <Alert tone="info" title="Connected">
-          {justSyncedName} is now reporting usage to this dashboard.
-        </Alert>
-      )}
 
       <Card>
         <CardHead

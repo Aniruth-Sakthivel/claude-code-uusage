@@ -51,10 +51,69 @@ import {
   FormCard,
   Input,
   Select,
+  Spinner,
   useToast,
 } from "./ui";
 
 const ENVIRONMENTS = ["", "development", "staging", "production", "personal"];
+
+export type ConnectWaitStatus = "connecting" | "connected" | "timeout";
+
+/**
+ * The state a user actually needs while the command they just pasted is
+ * still doing its work — a spinner while waiting, and an honest failure
+ * state instead of silence if it never reports in. Rendered right under the
+ * command itself, not in a banner elsewhere on the page, so someone watching
+ * this card for a result is not left guessing whether anything is happening.
+ */
+function ConnectWaitStatusBlock({
+  status,
+  onRetry,
+}: {
+  status: ConnectWaitStatus;
+  onRetry?: () => void;
+}) {
+  if (status === "connecting") {
+    return (
+      <div
+        className="mt-4 flex items-start gap-3 rounded-xl border border-line bg-surface-2 p-3.5 text-sm"
+        aria-live="polite"
+      >
+        <Spinner />
+        <div>
+          <div className="font-medium">Waiting for this PC to check in…</div>
+          <div className="mt-0.5 text-muted">
+            Keep this page open — it updates on its own. Usually under a minute; longer
+            on a slow connection or a fresh Python install.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "connected") {
+    return (
+      <Alert tone="success" title="Connected">
+        Reporting usage now. You're done — no need to keep this page open.
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert tone="warn" title="Still hasn't reported in">
+      <p>
+        Check the PowerShell window on that PC for an error, or run{" "}
+        <code className="rounded bg-surface-2 px-1">{SESSIONS_COMMAND}</code> there — it
+        says exactly what happened. This page keeps waiting either way.
+      </p>
+      {onRetry && (
+        <Button size="sm" variant="subtle" className="mt-2.5" onClick={onRetry}>
+          Check again
+        </Button>
+      )}
+    </Alert>
+  );
+}
 
 /**
  * One command, one step.
@@ -123,9 +182,17 @@ function defaultName(): string {
 export function ConnectPanel({
   systems = [],
   onConnected,
+  connectStatus,
+  onRetryWait,
 }: {
   systems?: SystemRow[];
   onConnected?: (systemId: string) => void;
+  /** Set by the caller once it starts waiting for this PC's first sync;
+   * undefined renders nothing extra, so pages that don't track this (e.g.
+   * the first-run Welcome screen) are unaffected. */
+  connectStatus?: ConnectWaitStatus;
+  /** Only used in the "timeout" state, to re-arm the wait. */
+  onRetryWait?: () => void;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -177,6 +244,17 @@ export function ConnectPanel({
               variant="subtle"
               size="sm"
               onClick={() => {
+                // A confirm only while still waiting — the one moment closing
+                // this card actually loses something (the visible wait state;
+                // the connection attempt on the PC itself is unaffected).
+                if (
+                  connectStatus === "connecting" &&
+                  !window.confirm(
+                    "Still waiting for this PC to check in. Connect another PC anyway?",
+                  )
+                ) {
+                  return;
+                }
                 setResult(null);
                 connect.reset();
               }}
@@ -217,6 +295,19 @@ export function ConnectPanel({
             updates by itself once it reports in.
           </p>
           {/*
+            Said plainly, next to the command that actually does it — not buried
+            in a step eight paragraphs down. This one line now shares more than
+            token counts, and the earlier "only token counts" claim on the form
+            above would be false the moment someone runs it.
+          */}
+          <p className="mt-1 text-sm text-muted">
+            It also shares this PC's Claude account: email, org, plan tier, and the
+            rate-limit percentages Claude Code already tracks — never prompts,
+            responses, source code, or credentials. Turn it off any time, no reinstall,
+            with <code className="rounded bg-surface-2 px-1">meterhouse account disable</code>{" "}
+            on that PC.
+          </p>
+          {/*
             This line carries a single-use token that expires, which is easy to
             walk into now that it is the main path: paste it tomorrow and it
             fails with nothing to explain why. The API key inside the manual
@@ -227,6 +318,10 @@ export function ConnectPanel({
             After that, press “Connect another PC” for a fresh line — or use the steps
             below, which keep working because your API key does not expire.
           </p>
+
+          {connectStatus && (
+            <ConnectWaitStatusBlock status={connectStatus} onRetry={onRetryWait} />
+          )}
         </div>
 
         <details className="mt-5 rounded-xl border border-line bg-surface-2 p-3">
@@ -266,7 +361,13 @@ export function ConnectPanel({
               in the background on an idle PC, and no window to leave open. The Systems
               page shows <span className="font-semibold text-good">Working</span> during a
               session and <span className="font-semibold">Idle</span> between them; Idle is
-              healthy.
+              healthy.{" "}
+              <span className="font-semibold">
+                If Claude Code is open right now, fully quit and reopen it
+              </span>{" "}
+              — it reads hook config when a session starts, not while running, so a session
+              already open when you run this (including the one you copied this from) won't
+              pick it up.
             </Step>
 
             <Step n={6} title="Add a daily safety net" optional code={DAILY_CATCHUP_COMMAND}>
@@ -280,9 +381,9 @@ export function ConnectPanel({
               optional
               code={accountReportCommands()}
             >
-              Adds this machine to the Claude accounts page with plan and rate-limit usage.{" "}
-              <code className="rounded bg-surface-2 px-1">show</code> prints exactly what
-              would be sent without sending it; the sync transmits it.
+              The one-liner above already does this. Only needed here if you skipped it, or
+              want to check the payload first — <code className="rounded bg-surface-2 px-1">
+              show</code> prints exactly what would be sent without sending it.
             </Step>
 
             <Step n={8} title="Watch it run" optional code={DAEMON_COMMAND}>
@@ -380,8 +481,10 @@ export function ConnectPanel({
       </div>
 
       <p className="text-sm text-muted">
-        Only token counts and file metadata are ever sent — never your prompts, responses,
-        or source code.
+        The generated command also shares this PC's Claude account — email, org, plan
+        tier, and rate-limit usage — so it shows up fully set up with no second step.
+        Prompts, responses, source code, and credentials are never read, and account
+        sharing can be turned off on that PC any time.
       </p>
     </FormCard>
   );

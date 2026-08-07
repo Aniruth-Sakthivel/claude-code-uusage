@@ -98,11 +98,26 @@ class Agent:
             self.config.save()
 
         client = SyncClient(self.identity.server_url, self.identity.api_key)
-        return client.register(
+        resp = client.register(
             self.identity.display_name,
             self.identity.hostname,
             self.identity.agent_version,
         )
+
+        # Adopt the server's system_id — the same fix as the CLI's
+        # `cmd_register` and for the same reason: it is resolved from the API
+        # key, never from anything a client sends, so it is the only id that
+        # actually exists in the dashboard's database. Every later call here
+        # (scan, sync, health) keys off `self.identity.system_id`, and without
+        # this it would keep tagging local data with the id `load_identity`
+        # invented on first run instead.
+        if resp.get("system_id") and resp["system_id"] != self.identity.system_id:
+            self.identity.system_id = resp["system_id"]
+        if resp.get("display_name"):
+            self.identity.display_name = resp["display_name"]
+        save_identity(self.identity, self.config_path)
+
+        return resp
 
     def scan(self, verbose: bool = False, project_dirs: list[str] | None = None) -> dict:
         return scan_files(

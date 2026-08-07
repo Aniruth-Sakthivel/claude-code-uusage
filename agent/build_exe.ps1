@@ -8,13 +8,18 @@
 
 $ErrorActionPreference = "Stop"
 
-$py = if (Get-Command py -ErrorAction SilentlyContinue) { @("py", "-3") } else { @("python") }
+# Held apart as exe + args, not one array. `@("python")` collapses to the
+# plain string "python" through PowerShell's output pipeline, making $py[0]
+# the character "p" — see deploy/install.ps1 for the same bug and the full
+# explanation.
+if (Get-Command py -ErrorAction SilentlyContinue) { $pyExe = "py"; $pyArgs = @("-3") }
+else { $pyExe = "python"; $pyArgs = @() }
 
 Write-Host "Installing build dependencies..."
-& $py[0] $py[1..($py.Length-1)] -m pip install --quiet --upgrade pip pyinstaller
+& $pyExe @pyArgs -m pip install --quiet --upgrade pip pyinstaller
 
 Write-Host "Building meterhouse.exe..."
-& $py[0] $py[1..($py.Length-1)] -m PyInstaller `
+& $pyExe @pyArgs -m PyInstaller `
     --onefile --name meterhouse --console --clean `
     --distpath dist --workpath build --specpath . `
     entry.py

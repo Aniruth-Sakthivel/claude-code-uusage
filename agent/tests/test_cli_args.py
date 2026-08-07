@@ -107,3 +107,106 @@ class TestNewSubcommands:
         parser = build_parser()
         for name in ("install-hooks", "uninstall-hooks", "sessions"):
             assert parser.parse_args([name]).func is not None
+
+
+class TestRegisterAdoptsTheServersSystemId:
+    """The server's system_id is authoritative — resolved from the API key,
+    never from anything the client sends — and it is the only id that exists
+    anywhere in the dashboard's database. Before this, `cmd_register` printed
+    it but never adopted it, so agent.json kept the locally-invented uuid4
+    from `load_identity`'s first run forever, and `meterhouse identity` showed
+    an id that matched nothing server-side."""
+
+    def _run(self, monkeypatch, capsys, register_response):
+        import meterhouse.cli as cli
+        from meterhouse.identity import Identity
+
+        saves = []
+        local = Identity(
+            system_id="locally-invented-uuid",
+            installation_id="inst-1",
+            hostname="test-host",
+            display_name="PC",
+            agent_version="0.1.0",
+            created_at="2026-07-25T00:00:00+00:00",
+        )
+        monkeypatch.setattr(cli, "load_identity", lambda **kw: local)
+        monkeypatch.setattr(cli, "save_identity", lambda ident: saves.append(vars(ident).copy()))
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            def register(self, *a, **k):
+                return register_response
+
+        import meterhouse.sync as sync_mod
+        monkeypatch.setattr(sync_mod, "SyncClient", FakeClient)
+
+        class Args:
+            pass
+
+        args = Args()
+        args.server = "https://central.example"
+        args.api_key = "cfk_test"
+        args.display_name = "PC"
+        args.ws_url = None
+
+        cli.cmd_register(args)
+        return saves, capsys.readouterr().out
+
+    def test_adopts_the_server_system_id(self, monkeypatch, capsys):
+        saves, out = self._run(
+            monkeypatch, capsys,
+            {"system_id": "server-authoritative-id", "display_name": "PC"},
+        )
+        assert "server-authoritative-id" in out
+        assert saves[-1]["system_id"] == "server-authoritative-id"
+
+    def test_adopts_the_servers_deduplicated_display_name(self, monkeypatch, capsys):
+        saves, _ = self._run(
+            monkeypatch, capsys,
+            {"system_id": "server-id", "display_name": "PC (2)"},
+        )
+        assert saves[-1]["display_name"] == "PC (2)"
+
+    def test_a_failed_register_call_does_not_touch_the_local_id(self, monkeypatch, capsys):
+        import meterhouse.cli as cli
+        from meterhouse.identity import Identity
+        from meterhouse.sync import SyncError
+
+        saves = []
+        local = Identity(
+            system_id="locally-invented-uuid",
+            installation_id="inst-1",
+            hostname="test-host",
+            display_name="PC",
+            agent_version="0.1.0",
+            created_at="2026-07-25T00:00:00+00:00",
+        )
+        monkeypatch.setattr(cli, "load_identity", lambda **kw: local)
+        monkeypatch.setattr(cli, "save_identity", lambda ident: saves.append(vars(ident).copy()))
+
+        class FailingClient:
+            def __init__(self, *a, **k):
+                pass
+
+            def register(self, *a, **k):
+                raise SyncError("offline")
+
+        import meterhouse.sync as sync_mod
+        monkeypatch.setattr(sync_mod, "SyncClient", FailingClient)
+
+        class Args:
+            pass
+
+        args = Args()
+        args.server = "https://central.example"
+        args.api_key = "cfk_test"
+        args.display_name = "PC"
+        args.ws_url = None
+
+        cli.cmd_register(args)
+        # One save from before the (failed) network call; none after it.
+        assert len(saves) == 1
+        assert saves[0]["system_id"] == "locally-invented-uuid"

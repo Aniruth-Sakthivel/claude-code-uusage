@@ -270,6 +270,21 @@ def cmd_register(args):
             ident.display_name, ident.hostname, ident.agent_version)
         print(f"Registered with central server as '{resp['display_name']}' "
               f"(server system_id {resp['system_id']}).")
+
+        # The server's system_id is authoritative — it is resolved from the
+        # API key, never from anything the client sends, and it is what every
+        # table in the dashboard is actually keyed on. Without this, the
+        # locally-generated id from `load_identity`'s first run (a plain
+        # uuid4, unrelated to the server's row) stayed in agent.json forever:
+        # every command still worked, because auth is by API key and the
+        # server never trusts a client-supplied id, but `meterhouse identity`
+        # showed a system_id that existed nowhere in the database — worthless
+        # for anyone trying to look this machine up by it.
+        if resp.get("system_id") and resp["system_id"] != ident.system_id:
+            ident.system_id = resp["system_id"]
+        if resp.get("display_name"):
+            ident.display_name = resp["display_name"]
+        save_identity(ident)
     except SyncError as e:
         print(f"Saved config, but registration call failed: {e}")
 
@@ -449,6 +464,18 @@ def cmd_install_hooks(args):
     if ok:
         print("The agent will now start with your next Claude Code session "
               "and stop when it ends.")
+        # Claude Code reads its hook configuration when a session starts, not
+        # continuously — installing hooks while a session is already open (the
+        # common case, since this is usually run from inside one) does not
+        # retroactively wire that session up. Without this note, "it isn't
+        # working" is the natural first read: the exact commands above run
+        # fine by hand, `meterhouse sessions` shows the hooks installed, and
+        # still nothing happens until the running Claude Code is fully quit
+        # and reopened — a "new session" started inside the same still-running
+        # app is not enough.
+        print("If Claude Code is open right now, fully quit and reopen it — "
+              "these hooks won't take effect in a session that was already "
+              "running when they were installed.")
     else:
         raise SystemExit(1)
 

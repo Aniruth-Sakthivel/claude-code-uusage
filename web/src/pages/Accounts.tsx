@@ -345,7 +345,10 @@ export function Accounts() {
                  step out is what makes the page look broken to someone who has
                  already run `account enable`. */
               <>
-                Account reporting is off by default. On each PC, run{" "}
+                The Connect PC command now shares this automatically, so a PC connected
+                that way should show up shortly. Nothing here yet usually means an older
+                connection, or a PC running an agent version before this was added. On
+                that PC, run{" "}
                 <code className="rounded bg-surface-2 px-1 py-0.5">
                   python -m meterhouse account show
                 </code>{" "}
