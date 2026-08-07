@@ -320,6 +320,65 @@ registering alone, or running `scan` without `sync`, is not enough.
 | Want a clean re-scan | Delete the usage DB (`%USERPROFILE%\.claude\meterhouse\usage.db`) and run `scan` again. |
 | `sync` says "Central mode not configured" | Run `register` first with `--server` and `--api-key`. |
 | `sync` fails / offline | Expected when the server is unreachable; it retries on the next run. |
+| Agent scanned once and never again | The daemon isn't actually running continuously. See "It only scanned once" below. |
+
+### It only scanned once, then stopped
+
+`meterhouse daemon` scans forever by itself — there is no "scan once and
+exit" mode in this codebase's daemon. If you're only seeing one scan, one of
+these is happening:
+
+1. **You're on an older installed version.** `pip install meterhouse-rotor`
+   resolves to whatever is currently published to PyPI, not this repo's
+   source — an install done before a given fix shipped stays on the old
+   behavior until you explicitly upgrade. Check what you actually have:
+   ```powershell
+   python -m meterhouse --version
+   python -m meterhouse daemon --help   # fails with "invalid choice" on old builds
+   ```
+   If `daemon`/`status`/`connect` aren't recognized, force a fresh install:
+   `python -m pip install --upgrade --force-reinstall meterhouse-rotor`.
+
+2. **The scheduled task isn't running `daemon`.** A leftover task from an
+   older install (or a customized one) may run a one-shot command
+   (`scan`/`sync`/`once`) on a timer instead of the persistent `daemon`.
+   Check the exact command it registered:
+   ```powershell
+   (Get-ScheduledTask -TaskName 'Meterhouse Agent').Actions | Format-List
+   ```
+   The `Arguments` should end in `daemon`, not `scan`, `sync`, or `once`. If
+   it's wrong, delete the task (`schtasks /Delete /TN "Meterhouse Agent" /F`)
+   and re-run the installer.
+
+3. **Antivirus killed or quarantined the process.** This is the most common
+   cause when the daemon starts, runs briefly, then goes silent with nothing
+   in its own log to explain why. Check:
+   ```powershell
+   # Did Defender detect/quarantine anything referencing Meterhouse or python?
+   Get-MpThreatDetection | Where-Object { $_.Resources -match 'Meterhouse|meterhouse' }
+   Get-MpThreat
+
+   # Is a daemon process actually alive right now?
+   Get-Process pythonw, python, meterhouse -ErrorAction SilentlyContinue
+
+   # When did it last actually do anything?
+   Get-Content "$env:USERPROFILE\.claude\meterhouse\health.json" | ConvertFrom-Json
+   Get-Content "$env:USERPROFILE\.claude\meterhouse\agent.log" -Tail 40
+   ```
+   The standalone `meterhouse.exe` (used only as a fallback by
+   `deploy/install.ps1` when Python isn't available) is an **unsigned**
+   PyInstaller single-file build — this is a well-known false-positive
+   trigger for Windows Defender's behavioral detection, since "unrecognized
+   downloaded exe that then runs hidden in the background and talks to the
+   network" matches its heuristics closely. `python.exe`/`pythonw.exe`
+   (the default path — what `pip install` uses) are signed by Microsoft/PSF
+   and essentially never trigger this. If Defender is the culprit, add an
+   exclusion and reinstall:
+   ```powershell
+   Add-MpPreference -ExclusionPath "$env:LOCALAPPDATA\Meterhouse"
+   Add-MpPreference -ExclusionPath "$env:USERPROFILE\.claude\meterhouse"
+   python -m meterhouse connect --server ... --api-key ...
+   ```
 
 ---
 

@@ -76,11 +76,30 @@ function Install-AgentViaPip {
 
 Write-Host "Meterhouse setup for '$Name' -> $Server"
 
+# Python/pip first, the standalone exe only as a fallback - reversed from the
+# previous order. The exe is an unsigned, single-file PyInstaller build (see
+# .github/workflows/release-agent.yml - no code-signing step) and unsigned
+# onefile PyInstaller binaries are a well-known false-positive magnet for
+# Windows Defender's heuristic ("ML"/behavioral) detections: a freshly
+# downloaded, unrecognized exe that then runs hidden in the background,
+# writes to a scheduled task, and makes outbound network calls matches the
+# exact behavioral profile Defender's real-time protection flags, and it can
+# quarantine or kill the process well after a successful first run - which
+# looks exactly like "it scanned once, then stopped" from the user's side.
+# python.exe/pythonw.exe are Microsoft/PSF-signed and effectively never
+# trigger this. If Defender (or another AV) has already blocked a previous
+# run, check its protection history:
+#   Get-MpThreatDetection | Where-Object { $_.Resources -match 'Meterhouse' }
 Write-Host "Fetching the agent..."
-$exe = Get-StandaloneExe
-if (-not $exe) {
+$exe = $null
+try {
     Find-Python
     Install-AgentViaPip
+} catch {
+    Write-Host "Python path failed ($($_.Exception.Message)) - trying the standalone exe instead."
+    Write-Host "Note: the standalone exe is unsigned and more likely to be flagged by antivirus software." -ForegroundColor Yellow
+    $exe = Get-StandaloneExe
+    if (-not $exe) { throw "Could not install the agent via Python or the standalone exe." }
 }
 
 $InstallDir = Join-Path $env:LOCALAPPDATA "Meterhouse"
@@ -170,6 +189,24 @@ if ($exe) {
     $daemonExecute = if (Test-Path $windowless) { $windowless } else { $pyPath }
     $prefix = if ($script:PyArgs.Count -gt 0) { ($script:PyArgs -join " ") + " " } else { "" }
     $daemonArguments = "${prefix}-m meterhouse daemon"
+}
+
+# Best-effort Defender exclusion for the daemon's own data/log directory and
+# (when the standalone exe was used) the exe itself - only possible when
+# elevated, since Add-MpPreference requires admin rights; silently skipped
+# otherwise rather than treated as a failure, since most installs run
+# unelevated and the exclusion is a hardening step, not a requirement.
+$isElevatedForDefender = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($isElevatedForDefender -and (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
+    try {
+        Add-MpPreference -ExclusionPath $InstallDir -ErrorAction Stop
+        Add-MpPreference -ExclusionPath (Join-Path $env:USERPROFILE ".claude\meterhouse") -ErrorAction Stop
+        Write-Host "Added a Windows Defender exclusion for the agent's data/log directory."
+    } catch {
+        Write-Host "Could not add a Defender exclusion ($($_.Exception.Message)) - not fatal, continuing." -ForegroundColor Yellow
+    }
+} elseif (-not $isElevatedForDefender) {
+    Write-Host "Not elevated - skipping the Defender exclusion. If antivirus interferes, re-run 'Add-MpPreference -ExclusionPath `"$InstallDir`"' from an elevated PowerShell." -ForegroundColor DarkGray
 }
 
 Write-Host "Starting the agent..."
