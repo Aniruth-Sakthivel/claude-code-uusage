@@ -216,14 +216,22 @@ export function TimeseriesChart({ data }: { data: Timeseries }) {
         </div>
       )}
 
-      {/* Legend — previously absent, so colors could not be attributed. */}
-      <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
-        {series.map((s) => (
-          <li key={s.id} className="flex items-center gap-2 text-xs text-ink-2">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
-            {s.name}
-          </li>
-        ))}
+      {/* Legend, styled as pill chips to match the badge/tile language used
+          everywhere else in the app rather than a bare colour-key list. */}
+      <ul className="mt-4 flex flex-wrap gap-2">
+        {series.map((s) => {
+          const total = s.points.reduce((sum, v) => sum + v, 0);
+          return (
+            <li
+              key={s.id}
+              className="inline-flex items-center gap-2 rounded-full bg-surface-2 py-1 pl-2 pr-2.5 text-xs text-ink-2"
+            >
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+              <span className="font-medium text-ink">{s.name}</span>
+              <span className="tnum text-muted">{fmtTokens(total)}</span>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

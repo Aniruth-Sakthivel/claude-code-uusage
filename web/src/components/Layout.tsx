@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Building2, ChevronRight, Compass, Cpu, FolderKanban, KeyRound, LayoutGrid, ListTodo, Menu, MonitorPlay, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
+import { Building2, ChevronRight, Compass, Cpu, FolderKanban, KeyRound, LayoutGrid, Menu, MonitorPlay, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 
 import { useAuth } from "../auth/AuthContext";
 import type { Capability } from "../api/types";
+import { Avatar } from "./Avatar";
 import { NotificationsBell } from "./NotificationsBell";
 import { ThemeToggle } from "../lib/theme";
 
@@ -17,7 +18,6 @@ interface NavItem {
 
 const MONITOR: NavItem[] = [
   { to: "/dashboard", label: "Overview", end: true, icon: LayoutGrid },
-  { to: "/workspace", label: "Workspace", icon: ListTodo },
   { to: "/systems", label: "Systems", icon: Cpu },
   { to: "/accounts", label: "Claude accounts", cap: "view_all", icon: KeyRound },
   { to: "/projects", label: "Projects", icon: FolderKanban },
@@ -123,9 +123,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       <div className="mt-4 rounded-[16px] border border-line bg-surface p-3">
         <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-full bg-surface-2 text-ink-2">
-            <UserRound className="h-4 w-4" />
-          </div>
+          <Avatar label={user?.full_name || user?.email || "?"} src={user?.avatar_url} size="md" />
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-ink">
               {user?.full_name || user?.email}

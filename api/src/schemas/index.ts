@@ -397,6 +397,7 @@ export const userCreate = z.object({
 
 export const userUpdate = z.object({
   full_name: z.string().max(120).nullish(),
+  avatar_url: z.string().url().max(2048).nullish(),
   password: z.string().min(8).nullish(),
   role: roleEnum.nullish(),
   is_active: z.boolean().nullish(),

@@ -1,27 +1,22 @@
-/** Per-project usage. Metadata only — never file contents. */
+/**
+ * Projects, grouped by the PC owner running them — a card grid mirroring the
+ * admin Users page. Each card is a drill-down into that owner's full project
+ * list (`ProjectOwnerDetail`), not an inline expansion, so this page stays a
+ * quick scan of who's using what.
+ */
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { Project, SystemRow } from "../api/types";
-import {
-  Card,
-  EmptyState,
-  ErrorState,
-  Eyebrow,
-  Input,
-  LoadingState,
-  Pagination,
-  Table,
-  Td,
-  Th,
-} from "../components/ui";
-import { fmtTokens } from "../lib/format";
-import { useTableControls } from "../lib/useTableControls";
+import { OwnerCard, type OwnerGroupSummary } from "../components/projects/OwnerCard";
+import { Card, EmptyState, ErrorState, Eyebrow, Input, LoadingState } from "../components/ui";
 
 export function Projects() {
+  const [query, setQuery] = useState("");
+
   const projects = useQuery({
     queryKey: qk.projects,
     queryFn: () => api.get<Project[]>("/projects"),
@@ -35,23 +30,41 @@ export function Projects() {
     document.title = "Projects — Meterhouse";
   }, []);
 
+  const ownerOf = new Map((systems.data ?? []).map((s) => [s.system_id, s.owner]));
   const nameOf = new Map((systems.data ?? []).map((s) => [s.system_id, s.display_name]));
 
-  const table = useTableControls(projects.data, {
-    searchText: (p) => `${p.project_name} ${nameOf.get(p.system_id) ?? ""}`,
-    sorters: {
-      project: (a, b) => a.project_name.localeCompare(b.project_name),
-      input: (a, b) => a.input_tokens - b.input_tokens,
-      output: (a, b) => a.output_tokens - b.output_tokens,
-      cache: (a, b) =>
-        a.cache_read_tokens + a.cache_creation_tokens - (b.cache_read_tokens + b.cache_creation_tokens),
-      sessions: (a, b) => a.sessions - b.sessions,
-      total: (a, b) => a.total_tokens - b.total_tokens,
-    },
-    descFirst: ["input", "output", "cache", "sessions", "total"],
-    initialSortKey: "total",
-    initialSortDir: "desc",
-  });
+  const groups: OwnerGroupSummary[] = useMemo(() => {
+    const byOwner = new Map<string, OwnerGroupSummary>();
+    for (const p of projects.data ?? []) {
+      const owner = ownerOf.get(p.system_id) || "No owner";
+      const group = byOwner.get(owner) ?? { owner, totalTokens: 0, sessions: 0, projectCount: 0 };
+      group.totalTokens += p.total_tokens;
+      group.sessions += p.sessions;
+      group.projectCount += 1;
+      byOwner.set(owner, group);
+    }
+
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? [...byOwner.values()].filter((g) => {
+          if (g.owner.toLowerCase().includes(q)) return true;
+          return (projects.data ?? []).some(
+            (p) =>
+              (ownerOf.get(p.system_id) || "No owner") === g.owner &&
+              (p.project_name.toLowerCase().includes(q) ||
+                (nameOf.get(p.system_id) ?? "").toLowerCase().includes(q)),
+          );
+        })
+      : [...byOwner.values()];
+
+    // Heaviest owner first, "No owner" always last regardless of its total —
+    // unassigned PCs are the exception to surface, not the headline.
+    return filtered.sort((a, b) => {
+      if (a.owner === "No owner") return 1;
+      if (b.owner === "No owner") return -1;
+      return b.totalTokens - a.totalTokens;
+    });
+  }, [projects.data, query, ownerOf, nameOf]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -59,118 +72,48 @@ export function Projects() {
         <Eyebrow>Analytics</Eyebrow>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Projects</h1>
         <p className="mt-1.5 text-base text-muted">
-          Token usage grouped by project directory, across your visible PCs.
+          Token usage grouped by who runs the PC — open a card for their full project list.
         </p>
       </div>
 
-      <Card>
-        {projects.isLoading ? (
+      {projects.isLoading ? (
+        <Card>
           <LoadingState />
-        ) : projects.isError ? (
+        </Card>
+      ) : projects.isError ? (
+        <Card>
           <ErrorState error={projects.error} onRetry={() => projects.refetch()} />
-        ) : projects.data!.length === 0 ? (
+        </Card>
+      ) : projects.data!.length === 0 ? (
+        <Card>
           <EmptyState
             title="No project activity yet"
             hint="Projects appear once a connected PC syncs its transcripts."
           />
-        ) : (
-          <>
-            <div className="mb-3">
-              <Input
-                type="search"
-                placeholder="Search by project or PC…"
-                value={table.query}
-                onChange={(e) => table.setQuery(e.target.value)}
-                aria-label="Search projects"
-              />
+        </Card>
+      ) : (
+        <>
+          <Input
+            type="search"
+            placeholder="Search by owner, project, or PC…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search projects"
+          />
+
+          {groups.length === 0 ? (
+            <Card>
+              <EmptyState title="No owners match your search" />
+            </Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {groups.map((g) => (
+                <OwnerCard key={g.owner} group={g} />
+              ))}
             </div>
-            {table.total === 0 ? (
-              <EmptyState title="No projects match your search" />
-            ) : (
-              <Table caption="Projects ranked by tracked tokens">
-                <thead>
-                  <tr>
-                    <Th
-                      sortDir={table.sortKey === "project" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("project")}
-                    >
-                      Project
-                    </Th>
-                    <Th>PC</Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "input" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("input")}
-                    >
-                      Input
-                    </Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "output" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("output")}
-                    >
-                      Output
-                    </Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "cache" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("cache")}
-                    >
-                      Cache
-                    </Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "sessions" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("sessions")}
-                    >
-                      Sessions
-                    </Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "total" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("total")}
-                    >
-                      Total
-                    </Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {table.rows.map((p) => (
-                    <tr key={`${p.system_id}:${p.project_name}`}>
-                      <Td className="font-medium">{p.project_name}</Td>
-                      <Td className="text-ink-2">
-                        {nameOf.get(p.system_id) ?? p.system_id.slice(0, 8)}
-                      </Td>
-                      <Td align="right" className="tnum text-ink-2">
-                        {fmtTokens(p.input_tokens)}
-                      </Td>
-                      <Td align="right" className="tnum text-ink-2">
-                        {fmtTokens(p.output_tokens)}
-                      </Td>
-                      <Td align="right" className="tnum text-ink-2">
-                        {fmtTokens(p.cache_read_tokens + p.cache_creation_tokens)}
-                      </Td>
-                      <Td align="right" className="tnum text-ink-2">
-                        {p.sessions}
-                      </Td>
-                      <Td align="right" className="tnum font-semibold">
-                        {fmtTokens(p.total_tokens)}
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            )}
-            <Pagination
-              page={table.page}
-              pageCount={table.pageCount}
-              total={table.total}
-              pageSize={table.pageSize}
-              onPage={table.setPage}
-            />
-          </>
-        )}
-      </Card>
+          )}
+        </>
+      )}
     </div>
   );
 }

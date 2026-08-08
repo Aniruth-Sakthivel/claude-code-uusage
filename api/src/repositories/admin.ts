@@ -30,6 +30,7 @@ export interface UserView {
   id: number;
   email: string;
   fullName: string;
+  avatarUrl: string | null;
   role: Role;
   isActive: boolean;
   systemIds: string[];
@@ -41,6 +42,7 @@ export async function listUsers(): Promise<UserView[]> {
       id: users.id,
       email: users.email,
       fullName: users.fullName,
+      avatarUrl: users.avatarUrl,
       isActive: users.isActive,
       role: roles.name,
     })
@@ -65,6 +67,7 @@ export async function listUsers(): Promise<UserView[]> {
     id: r.id,
     email: r.email,
     fullName: r.fullName,
+    avatarUrl: r.avatarUrl,
     role: r.role as Role,
     isActive: r.isActive,
     systemIds: bySystem.get(r.id) ?? [],
@@ -77,6 +80,7 @@ export async function getUserView(userId: number): Promise<UserView | null> {
       id: users.id,
       email: users.email,
       fullName: users.fullName,
+      avatarUrl: users.avatarUrl,
       isActive: users.isActive,
       role: roles.name,
     })
@@ -97,6 +101,7 @@ export async function getUserView(userId: number): Promise<UserView | null> {
     id: row.id,
     email: row.email,
     fullName: row.fullName,
+    avatarUrl: row.avatarUrl,
     role: row.role as Role,
     isActive: row.isActive,
     systemIds: assigned.map((a) => a.systemId),

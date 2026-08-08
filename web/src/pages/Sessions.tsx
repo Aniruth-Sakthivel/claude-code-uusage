@@ -29,7 +29,8 @@ import {
 } from "../components/ui";
 import { PersonList } from "../components/PersonList";
 import { PersonDetailPanel } from "../components/PersonDetail";
-import { fmtRelative, fmtTokens } from "../lib/format";
+import { PersonMiniCard } from "../components/person/PersonMiniCard";
+import { fmtTokens } from "../lib/format";
 import {
   loadLastPerson,
   loadPinned,
@@ -109,25 +110,9 @@ function AllUsers({ people, range }: { people: PersonRow[]; range: string }) {
 
       <Card>
         <CardHead title="Everyone" />
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {people.map((p) => (
-            <div key={p.id} className="rounded-xl border border-line p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0 truncate text-sm font-semibold text-ink">
-                  {p.full_name || p.email}
-                </div>
-                <span
-                  aria-hidden
-                  className={`h-2 w-2 shrink-0 rounded-full ${
-                    p.status === "online" ? "bg-good" : "bg-muted"
-                  }`}
-                />
-              </div>
-              <div className="tnum mt-1 text-2xs text-muted">
-                {fmtTokens(p.tokens_range)} · {p.sessions} sessions ·{" "}
-                {fmtRelative(p.last_active)}
-              </div>
-            </div>
+            <PersonMiniCard key={p.id} person={p} />
           ))}
         </div>
       </Card>

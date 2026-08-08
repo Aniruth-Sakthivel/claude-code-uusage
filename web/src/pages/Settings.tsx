@@ -16,6 +16,7 @@ import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { SystemRow } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { Avatar } from "../components/Avatar";
 import { supabase } from "../lib/supabase";
 import {
   Alert,
@@ -32,6 +33,8 @@ import {
   StatusPill,
   useToast,
 } from "../components/ui";
+
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 import { ThemeToggle } from "../lib/theme";
 import { fmtRelative } from "../lib/format";
 
@@ -78,14 +81,56 @@ export function Settings() {
   const [fullName, setFullName] = useState(user?.full_name ?? "");
   useEffect(() => setFullName(user?.full_name ?? ""), [user?.full_name]);
 
+  const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url ?? null);
+  useEffect(() => setAvatarUrl(user?.avatar_url ?? null), [user?.avatar_url]);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+
   const saveProfile = useMutation({
-    mutationFn: (name: string) => api.patch("/me/profile", { full_name: name }),
+    mutationFn: (input: { full_name: string; avatar_url: string | null }) =>
+      api.patch("/me/profile", input),
     onSuccess: async () => {
       await refresh();
       toast.push("Profile saved.");
     },
     onError: (e: Error) => toast.push(e.message, "error"),
   });
+
+  async function onAvatarSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.push("Choose an image file.", "error");
+      return;
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      toast.push("Images must be 5MB or smaller.", "error");
+      return;
+    }
+
+    setAvatarUploading(true);
+    try {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser();
+      if (!authUser) throw new Error("Not signed in.");
+
+      const ext = file.name.split(".").pop() || "png";
+      const path = `${authUser.id}/${Date.now()}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(path, file, { upsert: true, cacheControl: "3600" });
+      if (uploadError) throw uploadError;
+
+      const { data: pub } = supabase.storage.from("avatars").getPublicUrl(path);
+      setAvatarUrl(pub.publicUrl);
+      saveProfile.mutate({ full_name: fullName, avatar_url: pub.publicUrl });
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Upload failed.", "error");
+    } finally {
+      setAvatarUploading(false);
+    }
+  }
 
   // ── password ─────────────────────────────────────────────────────────────
   const [password, setPassword] = useState("");
@@ -153,10 +198,26 @@ export function Settings() {
       <FormCard
         onSubmit={(e) => {
           e.preventDefault();
-          saveProfile.mutate(fullName);
+          saveProfile.mutate({ full_name: fullName, avatar_url: avatarUrl });
         }}
       >
         <CardHead title="Profile" hint={user?.role} />
+        <div className="mb-4 flex items-center gap-3">
+          <Avatar label={fullName || user?.email || "?"} src={avatarUrl} size="md" />
+          <div>
+            <label className="inline-flex cursor-pointer items-center rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:text-ink">
+              {avatarUploading ? "Uploading…" : "Change photo"}
+              <input
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                disabled={avatarUploading}
+                onChange={onAvatarSelected}
+              />
+            </label>
+            <div className="mt-1 text-2xs text-muted">JPG or PNG, up to 5MB.</div>
+          </div>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Display name" required>
             {(p) => (
@@ -178,7 +239,10 @@ export function Settings() {
             type="submit"
             size="sm"
             loading={saveProfile.isPending}
-            disabled={!fullName.trim() || fullName === user?.full_name}
+            disabled={
+              !fullName.trim() ||
+              (fullName === user?.full_name && avatarUrl === (user?.avatar_url ?? null))
+            }
           >
             Save profile
           </Button>

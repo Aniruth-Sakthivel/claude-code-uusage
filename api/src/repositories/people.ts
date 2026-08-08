@@ -78,6 +78,7 @@ export interface PersonRow {
   id: number;
   email: string;
   full_name: string;
+  avatar_url: string | null;
   role: string;
   is_active: boolean;
   status: "online" | "offline";
@@ -118,6 +119,7 @@ export async function listPeople(
       id: users.id,
       email: users.email,
       fullName: users.fullName,
+      avatarUrl: users.avatarUrl,
       role: roles.name,
       isActive: users.isActive,
     })
@@ -253,6 +255,7 @@ export async function listPeople(
       id: p.id,
       email: p.email,
       full_name: p.fullName,
+      avatar_url: p.avatarUrl,
       role: p.role,
       is_active: p.isActive,
       status: online ? ("online" as const) : ("offline" as const),
@@ -275,6 +278,7 @@ function emptyPerson(p: {
   id: number;
   email: string;
   fullName: string;
+  avatarUrl: string | null;
   role: string;
   isActive: boolean;
 }): PersonRow {
@@ -282,6 +286,7 @@ function emptyPerson(p: {
     id: p.id,
     email: p.email,
     full_name: p.fullName,
+    avatar_url: p.avatarUrl,
     role: p.role,
     is_active: p.isActive,
     status: "offline",

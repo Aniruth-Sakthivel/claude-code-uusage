@@ -80,8 +80,15 @@ export async function savePreferences(
   return prefs;
 }
 
-export async function updateOwnProfile(userId: number, fullName: string): Promise<void> {
-  await db.update(users).set({ fullName }).where(eq(users.id, userId));
+export async function updateOwnProfile(
+  userId: number,
+  fullName: string,
+  avatarUrl?: string | null,
+): Promise<void> {
+  const patch: Partial<typeof users.$inferInsert> = { fullName };
+  // `undefined` means "not sent" (leave unchanged); `null` means "clear it".
+  if (avatarUrl !== undefined) patch.avatarUrl = avatarUrl;
+  await db.update(users).set(patch).where(eq(users.id, userId));
 }
 
 // ── retention ─────────────────────────────────────────────────────────────────

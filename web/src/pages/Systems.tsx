@@ -1,7 +1,7 @@
 /** Systems list — every connected PC with its status and totals. */
 
 import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -9,9 +9,8 @@ import { api } from "../api/client";
 import { fleetKeys, qk } from "../api/queryKeys";
 import type { CreateSystemPayload, SystemCreated, SystemRow, UpdateSystemPayload } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
-import { Avatar } from "../components/Avatar";
-import { ScanActivity } from "../components/ScanActivity";
 import { SystemCommandsPanel } from "../components/SystemCommandsPanel";
+import { SystemCard } from "../components/systems/SystemCard";
 import {
   Alert,
   Button,
@@ -29,13 +28,9 @@ import {
   Pagination,
   Select,
   StatusPill,
-  Table,
-  Td,
   Textarea,
-  Th,
   useToast,
 } from "../components/ui";
-import { fmtRelative, fmtTokens } from "../lib/format";
 import { useTableControls } from "../lib/useTableControls";
 
 /** Mirrors the list in ConnectPanel.tsx — kept in sync there, not imported,
@@ -152,12 +147,27 @@ const HEALTH_ORDER: SystemRow["health"][] = [
  * Spelling out the exceptions on the page beats leaving them to a tooltip.
  */
 function StatusLegend() {
-  const items: { health: SystemRow["health"]; means: string }[] = [
+  // A "Restart agent" command from this page only takes effect once the
+  // agent checks in on its own — so it does nothing for a genuinely hung
+  // process. `meterhouse stop` kills it directly by PID from the lock file,
+  // works even fully offline, and the Scheduled Task supervisor relaunches
+  // the daemon automatically within about a minute.
+  const restartHint = (
+    <>
+      On that PC, run{" "}
+      <code className="rounded bg-surface-2 px-1 py-0.5">meterhouse stop</code> — it kills the
+      stuck process directly and the agent relaunches itself within about a minute. The
+      "Restart agent" button here only works once the agent checks in on its own, so it won't
+      help a truly hung one.
+    </>
+  );
+
+  const items: { health: SystemRow["health"]; means: ReactNode }[] = [
     { health: "healthy", means: "Running and reporting normally." },
     { health: "dormant", means: "Stopped deliberately (a Stop command, or uninstalled)." },
     { health: "late", means: "Missed a check-in — usually asleep or offline." },
-    { health: "stalled", means: "Went quiet without stopping cleanly. Try Restart agent." },
-    { health: "dead", means: "No contact for over a day. Re-run the connect command." },
+    { health: "stalled", means: <>Went quiet without stopping cleanly. {restartHint}</> },
+    { health: "dead", means: <>No contact for over a day. {restartHint} If it's not installed, re-run the connect command instead.</> },
     { health: "never", means: "Enrolled but has never reported. Finish setup on that PC." },
   ];
 
@@ -370,127 +380,18 @@ export function Systems() {
             {table.total === 0 ? (
               <EmptyState title="No systems match your search" />
             ) : (
-              <Table caption="Systems with status, owner and tracked usage">
-                <thead>
-                  <tr>
-                    <Th
-                      sortDir={table.sortKey === "name" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("name")}
-                    >
-                      PC
-                    </Th>
-                    <Th
-                      sortDir={table.sortKey === "status" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("status")}
-                    >
-                      Status
-                    </Th>
-                    <Th>Scan activity</Th>
-                    <Th>Owner</Th>
-                    <Th>Environment</Th>
-                    <Th
-                      sortDir={table.sortKey === "sync" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("sync")}
-                    >
-                      Last sync
-                    </Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "tracked" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("tracked")}
-                    >
-                      Tracked
-                    </Th>
-                    <Th
-                      align="right"
-                      sortDir={table.sortKey === "projects" ? table.sortDir : null}
-                      onSort={() => table.toggleSort("projects")}
-                    >
-                      Projects
-                    </Th>
-                    {canManage && <Th align="right">Actions</Th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {table.rows.map((s) => (
-                <tr key={s.system_id}>
-                  <Td>
-                    <div className="font-semibold">{s.display_name}</div>
-                    <div className="text-xs text-muted">{s.hostname || "—"}</div>
-                  </Td>
-                  <Td>
-                    <StatusPill status={s.status} neverSynced={s.never_synced} health={s.health} reason={s.reason} />
-                    {s.active_sessions > 0 && (
-                      // The reason the agent is running at all. Without it the
-                      // row says "Working" with nothing to say what it is
-                      // working on.
-                      <div className="text-xs text-muted">
-                        {s.active_sessions} session{s.active_sessions === 1 ? "" : "s"} open
-                      </div>
-                    )}
-                  </Td>
-                  <Td>
-                    <ScanActivity scan={s} neverReported={s.never_synced} />
-                  </Td>
-                  <Td>
-                    {s.owner ? (
-                      <div className="flex items-center gap-2.5">
-                        <Avatar label={s.owner} />
-                        <span className="truncate text-sm text-ink-2">{s.owner}</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2.5">
-                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dashed border-line text-2xs text-muted">
-                          —
-                        </span>
-                        <span className="text-sm text-muted">No owner</span>
-                      </div>
-                    )}
-                  </Td>
-                  <Td className="text-ink-2">{s.environment || "—"}</Td>
-                  <Td className="tnum text-ink-2">
-                    {s.never_synced ? "never" : fmtRelative(s.last_sync_at)}
-                  </Td>
-                  <Td align="right" className="tnum font-semibold">
-                    {fmtTokens(s.total_tokens)}
-                  </Td>
-                  <Td align="right" className="tnum text-ink-2">
-                    {s.projects}
-                  </Td>
-                  {canManage && (
-                    <Td align="right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => openEdit(s)}
-                          aria-label={`Edit ${s.display_name}`}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setManaging(s)}
-                          aria-label={`Agent controls for ${s.display_name}`}
-                        >
-                          Agent controls
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="subtle"
-                          onClick={() => setPendingDelete(s)}
-                          aria-label={`Remove ${s.display_name}`}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </Td>
-                  )}
-                </tr>
-                  ))}
-                </tbody>
-              </Table>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {table.rows.map((s, i) => (
+                  <SystemCard
+                    key={s.system_id}
+                    system={s}
+                    colorIndex={i}
+                    onEdit={canManage ? () => openEdit(s) : undefined}
+                    onManage={canManage ? () => setManaging(s) : undefined}
+                    onRemove={canManage ? () => setPendingDelete(s) : undefined}
+                  />
+                ))}
+              </div>
             )}
             <Pagination
               page={table.page}

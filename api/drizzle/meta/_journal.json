@@ -120,6 +120,13 @@
       "when": 1786086521055,
       "tag": "0016_cloudy_slyde",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786166159128,
+      "tag": "0017_even_scorpion",
+      "breakpoints": true
     }
   ]
 }

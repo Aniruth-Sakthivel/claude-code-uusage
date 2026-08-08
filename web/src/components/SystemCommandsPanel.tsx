@@ -11,6 +11,7 @@
  */
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -40,17 +41,42 @@ import {
  * these mean something's actually wrong (or it was stopped on purpose) —
  * not the normal resting state.
  */
-const NOT_RUNNING_REASON: Partial<Record<SystemRow["health"], string>> = {
+/**
+ * The one thing worth repeating for every stuck-agent state: a queued
+ * command (including Restart) only runs once the agent checks in on its own,
+ * so it cannot unstick a genuinely hung process. `meterhouse stop` on the PC
+ * itself kills it directly by PID and works fully offline; the Scheduled
+ * Task supervisor then relaunches the daemon within about a minute.
+ */
+function RunStopLocally() {
+  return (
+    <>
+      On that PC, run <code className="rounded bg-surface-2 px-1 py-0.5">meterhouse stop</code> —
+      it kills the stuck process directly and the agent relaunches itself within about a minute.
+      Queued commands here (including Restart) only run once the agent checks in on its own, so
+      they can't unstick a genuinely hung process.
+    </>
+  );
+}
+
+const NOT_RUNNING_REASON: Partial<Record<SystemRow["health"], ReactNode>> = {
   dormant:
     "This PC's agent was stopped deliberately (a Stop command, or uninstalled). Queued " +
     "commands run once it's started again — via a Restart command, the scheduled task, " +
     "or a reboot.",
   late: "This PC hasn't checked in recently, so a queued command may sit pending for a while " +
     "before it's picked up.",
-  stalled: "This PC's agent went quiet without checking in again. A queued command will " +
-    "run once it resumes contact — if it doesn't, try Restart agent.",
-  dead: "This PC hasn't been heard from in over a day. Queued commands will sit pending until " +
-    "it reconnects — re-running the connect command on that machine may be needed.",
+  stalled: (
+    <>
+      This PC's agent went quiet without checking in again. <RunStopLocally />
+    </>
+  ),
+  dead: (
+    <>
+      This PC hasn't been heard from in over a day. <RunStopLocally /> If it's not installed at
+      all, re-run the connect command instead.
+    </>
+  ),
   never: "This PC has never successfully checked in, so nothing is listening for queued " +
     "commands yet — finish setup on that machine first.",
 };

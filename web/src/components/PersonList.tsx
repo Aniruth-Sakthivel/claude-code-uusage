@@ -10,16 +10,10 @@ import { Pin, PinOff } from "lucide-react";
 import { useMemo } from "react";
 
 import type { PersonRow } from "../api/types";
+import { Avatar } from "./Avatar";
 import { ScanTimer } from "./ScanActivity";
 import { Badge, Input } from "./ui";
 import { fmtRelative, fmtTokens } from "../lib/format";
-
-/** Initials stand in for avatars — there is no avatar field on a user. */
-function initialsOf(person: PersonRow): string {
-  const source = person.full_name?.trim() || person.email;
-  const parts = source.split(/[\s@._-]+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
-}
 
 function PersonButton({
   person,
@@ -48,18 +42,11 @@ function PersonButton({
         aria-current={selected ? "true" : undefined}
         className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
       >
-        <span className="relative shrink-0">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-2xs font-semibold text-ink-2">
-            {initialsOf(person)}
-          </span>
-          {/* Presence dot, ringed so it reads on any row background. */}
-          <span
-            aria-hidden
-            className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface ${
-              person.status === "online" ? "bg-good" : "bg-muted"
-            }`}
-          />
-        </span>
+        <Avatar
+          label={person.full_name || person.email}
+          src={person.avatar_url}
+          presence={person.status}
+        />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className="truncate text-sm font-semibold text-ink">

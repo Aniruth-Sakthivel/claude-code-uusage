@@ -495,6 +495,65 @@ export function Td({
   );
 }
 
+// ── tabs ──────────────────────────────────────────────────────────────────────
+export interface TabItem {
+  id: string;
+  label: string;
+  badge?: string | number;
+}
+
+/** Pill-strip tab switcher, matching the range-switcher visual already used
+ * on the Sessions page. Keyboard-navigable per the WAI-ARIA tabs pattern. */
+export function Tabs({
+  items,
+  active,
+  onChange,
+}: {
+  items: TabItem[];
+  active: string;
+  onChange: (id: string) => void;
+}) {
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const idx = items.findIndex((t) => t.id === active);
+    const delta = e.key === "ArrowRight" ? 1 : -1;
+    const next = items[(idx + delta + items.length) % items.length];
+    if (next) onChange(next.id);
+  }
+
+  return (
+    <div
+      role="tablist"
+      onKeyDown={onKeyDown}
+      className="inline-flex flex-wrap rounded-full border border-line bg-surface-2 p-1"
+    >
+      {items.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={active === t.id}
+          tabIndex={active === t.id ? 0 : -1}
+          onClick={() => onChange(t.id)}
+          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+            active === t.id
+              ? "bg-surface text-ink shadow-[var(--shadow)]"
+              : "text-ink-2 hover:text-ink"
+          }`}
+        >
+          {t.label}
+          {t.badge !== undefined && (
+            <span className="tnum rounded-full bg-surface-2 px-1.5 text-[0.65rem] text-muted">
+              {t.badge}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── dialog ────────────────────────────────────────────────────────────────────
 /**
  * General-purpose modal — arbitrary content, not just a confirm/cancel pair.

@@ -11,7 +11,8 @@ import { RealtimeProvider } from "./context/RealtimeContext";
 import { ThemeProvider } from "./lib/theme";
 import { AdminAudit } from "./pages/AdminAudit";
 import { AdminKeys } from "./pages/AdminKeys";
-import { AdminUsers } from "./pages/AdminUsers";
+import { AdminUserDetail } from "./pages/admin/AdminUserDetail";
+import { AdminUserGrid } from "./pages/admin/AdminUserGrid";
 import { Automations } from "./pages/Automations";
 import { Calendar } from "./pages/Calendar";
 import { Chat } from "./pages/Chat";
@@ -29,6 +30,7 @@ import { Login } from "./pages/Login";
 import { ResetPassword } from "./pages/ResetPassword";
 import { Overview } from "./pages/Overview";
 import { Projects } from "./pages/Projects";
+import { ProjectOwnerDetail } from "./pages/projects/ProjectOwnerDetail";
 import { Register } from "./pages/Register";
 import { Sessions } from "./pages/Sessions";
 import { Accounts } from "./pages/Accounts";
@@ -224,6 +226,14 @@ export default function App() {
                 }
               />
               <Route
+                path="/projects/:owner"
+                element={
+                  <Protected>
+                    <ProjectOwnerDetail />
+                  </Protected>
+                }
+              />
+              <Route
                 path="/sessions"
                 element={
                   <Protected>
@@ -236,7 +246,15 @@ export default function App() {
                 path="/admin/users"
                 element={
                   <Protected capability="manage_users">
-                    <AdminUsers />
+                    <AdminUserGrid />
+                  </Protected>
+                }
+              />
+              <Route
+                path="/admin/users/:id"
+                element={
+                  <Protected capability="manage_users">
+                    <AdminUserDetail />
                   </Protected>
                 }
               />

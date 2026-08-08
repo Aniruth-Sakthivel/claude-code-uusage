@@ -147,14 +147,15 @@ role, including developers, so onboarding does not require an admin.
 Administrators can alternatively pre-create machines and share keys from
 **Admin → Agent API keys**.
 
-Each install wires Claude Code's session hooks, so the agent runs only while a
-user has a Claude Code session open and stops when they finish — an idle PC
-runs no agent process at all. A single `Meterhouse Daily Catch-up` task is also
-registered as a safety net. To remove both:
+Each install runs a single always-on `meterhouse daemon` process that scans
+continuously — not gated by Claude Code sessions. A scheduled task (`Meterhouse
+Agent`) is registered as a supervisor: if the daemon process ever exits, the
+task relaunches it within about a minute. To stop the agent on a PC for good
+(uninstalling it), stop the daemon and remove the scheduled task:
 
 ```powershell
-python -m meterhouse uninstall-hooks
-schtasks /Delete /TN "Meterhouse Daily Catch-up" /F
+python -m meterhouse stop
+schtasks /Delete /TN "Meterhouse Agent" /F
 ```
 
 ---
@@ -166,11 +167,11 @@ schtasks /Delete /TN "Meterhouse Daily Catch-up" /F
 | `health` reports `database: error` | `DATABASE_URL` wrong, or using the direct host instead of the pooler. |
 | `Tenant or user not found` | Wrong pooler region. Copy the exact URI from **Connect**. |
 | Function times out on first request | Cold start plus a slow first connection. The configured timeout is 26s; retry. |
-| A PC stops reporting when the user closes the terminal | Re-run the "Connect this PC" one-liner. It installs Claude Code's session hooks, which start the agent windowless and detached from any console, and removes the old *Meterhouse Agent* / *Scan+Sync* / *Daemon* / *Watchdog* tasks. |
-| A PC shows **Idle** | Working as designed — the agent stopped because no Claude Code session is open. It restarts by itself on the next session. |
-| A PC never leaves **Idle** even while in use | The hooks are not registered. Run `meterhouse sessions` on that PC: it reports whether the hooks are installed, then `meterhouse install-hooks` to fix. Where policy locks `~/.claude/settings.json`, run `meterhouse daemon --always-on` from a logon task instead. |
-| "Scan now" from Agent controls does nothing | Commands are collected on the agent's next check-in, and the agent only runs during a session — so a queued command waits until that user next opens Claude Code, or until the daily catch-up. Check the Systems page's scan activity first. |
-| Systems page shows "No report" | The agent has not reported a state in the last 10 minutes and did not report stopping — so it was killed rather than finishing. Run `meterhouse health` on that PC; `meterhouse sessions` shows whether Claude Code is actually open. |
+| A PC stops reporting when the user closes the terminal | This is expected — `meterhouse connect` starts the daemon windowless and detached from any console, so it keeps running after the terminal closes. If it's actually gone, re-run the "Connect this PC" one-liner. |
+| The dashboard shows **stalled** or **dead**, and "Restart agent" from Agent controls does nothing | The agent is genuinely hung, not just offline — a queued command (including Restart) only takes effect once the agent checks in on its own, so it can't unstick a stuck process. On that PC, run `meterhouse stop`. It kills the process directly by PID from its lock file (works fully offline), and the scheduled task relaunches the daemon automatically within about a minute. Confirm with `meterhouse status`. |
+| A PC never leaves **Idle**/**never synced** even while in use | The daemon isn't running. Run `meterhouse status` on that PC to check; if nothing is running, re-run the "Connect this PC" one-liner (or `meterhouse daemon` directly) to start it. |
+| "Scan now" from Agent controls does nothing | Commands are collected on the agent's next check-in — check the Systems page's scan activity to see when that's due. If the agent is stalled/dead rather than just running behind, see the row above. |
+| Systems page shows "No report" | The agent has not reported a state in the last 10 minutes and did not report stopping — so it was likely killed rather than exiting cleanly. Run `meterhouse status` on that PC for its last known state. |
 | Invite emails never arrive | No SMTP configured in Supabase. Use the "set a password" option, or configure SMTP. The account still works — the default password is set regardless of whether the mail is delivered. |
 | Invite email shows no login details | The dashboard template still has Supabase's default body. Paste the template from "Invite email template" above. |
 | `unrecognized JWT kid` on user creation | Transient GoTrue error, retried automatically. Persisting means email confirmation is failing — check Supabase auth settings. |

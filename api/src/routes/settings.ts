@@ -26,7 +26,10 @@ const settingsIn = z.object({
   retentionDays: z.number().int().min(0).max(3650),
 });
 
-const profileIn = z.object({ full_name: z.string().min(1).max(120) });
+const profileIn = z.object({
+  full_name: z.string().min(1).max(120),
+  avatar_url: z.string().url().max(2048).nullish(),
+});
 
 // Preference keys are open-ended by design; values must be booleans so a
 // nested object can't be smuggled into the stored JSON.
@@ -101,8 +104,8 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.patch("/api/v1/me/profile", { preHandler: requireUser }, async (req) => {
     const user = currentUser(req);
     const body = profileIn.parse(req.body ?? {});
-    await repo.updateOwnProfile(user.id, body.full_name);
-    return { full_name: body.full_name };
+    await repo.updateOwnProfile(user.id, body.full_name, body.avatar_url);
+    return { full_name: body.full_name, avatar_url: body.avatar_url ?? null };
   });
 
   app.get("/api/v1/me/preferences", { preHandler: requireUser }, async (req) => ({

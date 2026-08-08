@@ -1,7 +1,9 @@
 /**
- * Initials avatar — this app has no avatar-image field anywhere, so a name or
- * email is always reduced to initials in a coloured circle instead.
+ * Avatar — an uploaded image when `src` is set, falling back to initials in a
+ * coloured circle otherwise (and if the image fails to load).
  */
+
+import { useState } from "react";
 
 /** Splits "Alex Kim" or "alex.kim@co.com" into "AK". */
 export function initialsOf(nameOrEmail: string): string {
@@ -17,20 +19,33 @@ const SIZES: Record<"sm" | "md", string> = {
 
 export function Avatar({
   label,
+  src,
   size = "sm",
   presence,
 }: {
   label: string;
+  src?: string | null;
   size?: "sm" | "md";
   presence?: "online" | "offline";
 }) {
+  const [broken, setBroken] = useState(false);
+
   return (
     <span className="relative inline-flex shrink-0">
-      <span
-        className={`grid place-items-center rounded-full bg-surface-2 font-semibold text-ink-2 ${SIZES[size]}`}
-      >
-        {initialsOf(label)}
-      </span>
+      {src && !broken ? (
+        <img
+          src={src}
+          alt=""
+          onError={() => setBroken(true)}
+          className={`rounded-full object-cover ${SIZES[size]}`}
+        />
+      ) : (
+        <span
+          className={`grid place-items-center rounded-full bg-surface-2 font-semibold text-ink-2 ${SIZES[size]}`}
+        >
+          {initialsOf(label)}
+        </span>
+      )}
       {presence && (
         <span
           aria-hidden

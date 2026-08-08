@@ -18,6 +18,7 @@ export interface User {
   id: number;
   email: string;
   full_name: string;
+  avatar_url: string | null;
   role: Role;
   is_active: boolean;
   system_ids: string[];
@@ -454,6 +455,7 @@ export interface CreatedUser extends User {
 
 export interface UpdateUserPayload {
   full_name?: string | null;
+  avatar_url?: string | null;
   password?: string | null;
   role?: Role | null;
   is_active?: boolean | null;
@@ -554,6 +556,7 @@ export interface PersonRow {
   id: number;
   email: string;
   full_name: string;
+  avatar_url: string | null;
   role: string;
   is_active: boolean;
   status: "online" | "offline";

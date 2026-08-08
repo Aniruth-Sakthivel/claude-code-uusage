@@ -359,6 +359,7 @@ export async function createUser(
 
 export interface UpdateUserInput {
   full_name?: string | null;
+  avatar_url?: string | null;
   password?: string | null;
   role?: Role | null;
   is_active?: boolean | null;
@@ -388,6 +389,7 @@ export async function updateUser(
 
   const patch: Partial<typeof users.$inferInsert> = {};
   if (input.full_name != null) patch.fullName = input.full_name;
+  if (input.avatar_url !== undefined) patch.avatarUrl = input.avatar_url;
   if (input.is_active != null) patch.isActive = input.is_active;
   if (input.role != null) {
     const role = await repo.findRoleByName(input.role);

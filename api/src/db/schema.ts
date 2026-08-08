@@ -45,6 +45,9 @@ export const users = pgTable(
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     email: varchar("email", { length: 255 }).notNull().unique(),
     fullName: varchar("full_name", { length: 120 }).notNull().default(""),
+    // Public URL of an image in the Supabase Storage `avatars` bucket. Null
+    // renders as initials rather than a broken image.
+    avatarUrl: varchar("avatar_url", { length: 2048 }),
     // Supabase Auth owns credentials; this is the link to that identity.
     supabaseUserId: varchar("supabase_user_id", { length: 64 }).unique(),
     roleId: integer("role_id")

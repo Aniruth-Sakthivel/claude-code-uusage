@@ -7,7 +7,8 @@ import { api } from "../api/client";
 import { qk } from "../api/queryKeys";
 import type { RankingItem, Summary, SystemRow, Timeseries } from "../api/types";
 import { RankingBars } from "../components/charts/RankingBars";
-import { TimeseriesChart } from "../components/charts/TimeseriesChart";
+import { StackedAreaChart } from "../components/charts/StackedAreaChart";
+import { SystemCard } from "../components/systems/SystemCard";
 import {
   Alert,
   Badge,
@@ -18,12 +19,8 @@ import {
   ErrorState,
   Eyebrow,
   LoadingState,
-  StatusPill,
-  Table,
-  Td,
-  Th,
 } from "../components/ui";
-import { fmtRelative, fmtTokens, systemColor } from "../lib/format";
+import { fmtTokens } from "../lib/format";
 
 const RANGES = [
   { id: "today", label: "Today" },
@@ -196,7 +193,7 @@ export function Overview() {
           ) : ts.isError ? (
             <ErrorState error={ts.error} onRetry={() => ts.refetch()} />
           ) : ts.data && ts.data.systems.length > 0 ? (
-            <TimeseriesChart data={ts.data} />
+            <StackedAreaChart data={ts.data} />
           ) : (
             <EmptyState title="No usage yet" hint="Once a connected workstation syncs, its daily usage appears here." />
           )}
@@ -269,42 +266,11 @@ export function Overview() {
             }
           />
         ) : (
-          <Table caption="Connected workstations with status and tracked usage">
-            <thead>
-              <tr>
-                <Th>Workstation</Th>
-                <Th>Status</Th>
-                <Th>Last seen</Th>
-                <Th align="right">Tracked</Th>
-                <Th align="right">Sessions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {systems.data!.map((sys, i) => (
-                <tr key={sys.system_id}>
-                  <Td>
-                    <div className="flex items-center gap-2.5">
-                      <span className="h-2.5 w-2.5 flex-none rounded-[3px]" style={{ background: systemColor(i) }} aria-hidden />
-                      <span className="min-w-0">
-                        <span className="block truncate font-semibold text-ink">{sys.display_name}</span>
-                        <span className="block truncate text-xs text-muted">{sys.hostname || "—"}</span>
-                      </span>
-                    </div>
-                  </Td>
-                  <Td>
-                    <StatusPill status={sys.status} neverSynced={sys.never_synced} health={sys.health} reason={sys.reason} />
-                  </Td>
-                  <Td className="tnum text-ink-2">{fmtRelative(sys.last_seen_at)}</Td>
-                  <Td align="right" className="tnum font-semibold text-ink">
-                    {fmtTokens(sys.total_tokens)}
-                  </Td>
-                  <Td align="right" className="tnum text-ink-2">
-                    {sys.sessions}
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {systems.data!.map((sys, i) => (
+              <SystemCard key={sys.system_id} system={sys} colorIndex={i} compact />
+            ))}
+          </div>
         )}
       </Card>
     </div>

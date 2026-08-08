@@ -132,6 +132,7 @@ export function userOut(view: {
   id: number;
   email: string;
   fullName: string;
+  avatarUrl: string | null;
   role: Role;
   isActive: boolean;
   systemIds: string[];
@@ -140,6 +141,7 @@ export function userOut(view: {
     id: view.id,
     email: view.email,
     full_name: view.fullName,
+    avatar_url: view.avatarUrl,
     role: view.role,
     is_active: view.isActive,
     system_ids: view.systemIds,
